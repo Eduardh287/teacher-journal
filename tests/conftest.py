@@ -13,14 +13,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from journal import db
-from journal.config import PROJECT_ROOT, test_database_url
+from journal.config import PROJECT_ROOT, get_test_database_url
 from journal.models import Journal, SchoolClass, Student, Subject, Teacher
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def engine():
-    """Engine тестової бази з актуальною схемою (alembic upgrade head)."""
-    url = test_database_url()
+    """Engine тестової бази з актуальною схемою (alembic upgrade head).
+
+    autouse: вмикається для кожного тесту, тож навіть код, що сам викликає
+    session_scope(), ніколи не дістанеться до робочої бази.
+    """
+    url = get_test_database_url()
     cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     cfg.attributes["database_url"] = url
     cfg.attributes["skip_logging_config"] = True
