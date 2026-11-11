@@ -1,0 +1,4 @@
+# Однакові закінчення рядків у репозиторії незалежно від ОС
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
