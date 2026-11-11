@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from journal.services.auth_service import CurrentUser
 from journal.ui import icons, theme
+from journal.ui.classes_page import ClassesPage
 from journal.ui.widgets import brand_mark, button, card, label
 
 # (іконка, підпис у меню)
@@ -43,7 +44,8 @@ class MainWindow(QMainWindow):
         self._icon_refreshers: list[Callable[[], None]] = []
 
         self.pages = QStackedWidget()
-        self.pages.addWidget(self._build_classes_page())
+        self.classes_page = ClassesPage(current_user)
+        self.pages.addWidget(self.classes_page)
         self.pages.addWidget(self._build_journals_page())
         self.pages.addWidget(self._build_settings_page())
 
@@ -193,19 +195,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignHCenter)
         return frame
 
-    def _build_classes_page(self) -> QWidget:
-        page, layout = self._page("Класи", "Списки учнів, для яких ви ведете журнали.")
-        layout.addWidget(
-            self._empty_state(
-                "users",
-                "Ще немає жодного класу",
-                "Створіть клас і додайте до нього список учнів.",
-                "Новий клас",
-            )
-        )
-        layout.addStretch(1)
-        return page
-
     def _build_journals_page(self) -> QWidget:
         page, layout = self._page("Журнали", "Відвідування та оцінки за кожним класом і предметом.")
         layout.addWidget(
@@ -264,3 +253,4 @@ class MainWindow(QMainWindow):
     def _refresh_icons(self) -> None:
         for refresh in self._icon_refreshers:
             refresh()
+        self.classes_page.refresh_icons()
