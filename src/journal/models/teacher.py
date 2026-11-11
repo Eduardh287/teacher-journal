@@ -14,4 +14,7 @@ class Teacher(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(150))
 
-    classes: Mapped[list["SchoolClass"]] = relationship(back_populates="teacher")  # noqa: F821
+    # Видалення викладача видаляє і його класи (разом з учнями та журналами).
+    classes: Mapped[list["SchoolClass"]] = relationship(  # noqa: F821
+        back_populates="teacher", cascade="all, delete-orphan"
+    )

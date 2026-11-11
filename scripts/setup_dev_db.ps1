@@ -1,47 +1,96 @@
 #Requires -RunAsAdministrator
-# One-time local dev database setup (run as Administrator).
-# - temporarily enables trust login from localhost
-# - sets a new password for the postgres superuser
-# - creates role journal_user and database journal
-# - restores pg_hba.conf
-# - writes DATABASE_URL to .env in the project root (one level above this script)
-# Passwords are typed by you; they go only to PostgreSQL and the local .env file.
+<#
+Local dev database setup. Safe to run more than once.
+
+Creates (or updates) role journal_user and databases:
+  journal       - the app database
+  journal_test  - separate database for pytest (tests never touch app data)
+and writes DATABASE_URL + TEST_DATABASE_URL to .env in the project root.
+
+Normal mode: asks for the existing postgres superuser password.
+-ResetSuperuserPassword: use only if the postgres password is unknown. It briefly
+  allows passwordless login for user postgres from 127.0.0.1 only, sets a new
+  password, then restores pg_hba.conf and restarts the PostgreSQL service.
+
+Passwords are sent to psql via stdin (never as command-line arguments).
+#>
+param([switch]$ResetSuperuserPassword)
+
 $ErrorActionPreference = 'Stop'
 
 $pg   = 'C:\Program Files\PostgreSQL\17'
 $hba  = "$pg\data\pg_hba.conf"
-$bak  = "$hba.bak"
+$bak  = "$hba.setup-backup"
 $svc  = 'postgresql-x64-17'
 $psql = "$pg\bin\psql.exe"
 $envFile = Join-Path (Split-Path $PSScriptRoot -Parent) '.env'
 
-function Read-Plain([string]$prompt) {
-    $s = Read-Host $prompt -AsSecureString
-    $p = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))
-    if ($p -notmatch '^[A-Za-z0-9]{8,}$') { throw 'Password: latin letters and digits only, at least 8 characters.' }
-    return $p
+function Read-Secret([string]$prompt, [switch]$Validate) {
+    $secure = Read-Host $prompt -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    if ($Validate -and $plain -notmatch '^[A-Za-z0-9]{8,}$') {
+        throw 'Password: latin letters and digits only, at least 8 characters.'
+    }
+    return $plain
 }
 
-$adminPw = Read-Plain 'New password for superuser postgres'
-$appPw   = Read-Plain 'Password for app user journal_user'
+function Invoke-Sql([string]$sql) {
+    # SQL goes through stdin, so passwords never appear in the process list.
+    $sql | & $psql -U postgres -h 127.0.0.1 -d postgres -v ON_ERROR_STOP=1 -q -f -
+    if ($LASTEXITCODE -ne 0) { throw "psql failed with exit code $LASTEXITCODE" }
+}
 
-Copy-Item $hba $bak -Force
-try {
-    $lines = Get-Content $bak | ForEach-Object {
-        if ($_ -notmatch '^\s*#' -and $_ -match '^\s*host') { $_ -replace '(scram-sha-256|md5|password)\s*$', 'trust' } else { $_ }
+if ($ResetSuperuserPassword) {
+    if (Test-Path $bak) {
+        throw "Found $bak from an interrupted run. Restore it over pg_hba.conf manually, restart the '$svc' service, then run again."
     }
-    Set-Content $hba $lines -Encoding ascii
-    Restart-Service $svc
-    Start-Sleep 3
+    $newAdminPw = Read-Secret 'New password for superuser postgres' -Validate
+    Copy-Item $hba $bak
+    try {
+        # One extra rule at the top: only user postgres, only from 127.0.0.1.
+        $original = Get-Content $bak
+        Set-Content $hba (@('host all postgres 127.0.0.1/32 trust') + $original) -Encoding ascii
+        Restart-Service $svc
+        Start-Sleep 3
+        Invoke-Sql "ALTER USER postgres PASSWORD '$newAdminPw';"
+    }
+    finally {
+        Copy-Item $bak $hba -Force
+        Restart-Service $svc
+        Remove-Item $bak
+    }
+    $adminPw = $newAdminPw
+}
+else {
+    $adminPw = Read-Secret 'Password of PostgreSQL superuser postgres'
+}
 
-    & $psql -U postgres -h 127.0.0.1 -v ON_ERROR_STOP=1 -c "ALTER USER postgres PASSWORD '$adminPw';"
-    & $psql -U postgres -h 127.0.0.1 -v ON_ERROR_STOP=1 -c "CREATE ROLE journal_user LOGIN PASSWORD '$appPw';"
-    & $psql -U postgres -h 127.0.0.1 -v ON_ERROR_STOP=1 -c "CREATE DATABASE journal OWNER journal_user ENCODING 'UTF8';"
+$appPw = Read-Secret 'Password for app user journal_user (new or existing)' -Validate
+
+$env:PGPASSWORD = $adminPw
+try {
+    Invoke-Sql @"
+DO `$`$BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'journal_user') THEN
+    ALTER ROLE journal_user WITH LOGIN PASSWORD '$appPw';
+  ELSE
+    CREATE ROLE journal_user LOGIN PASSWORD '$appPw';
+  END IF;
+END`$`$;
+SELECT 'CREATE DATABASE journal OWNER journal_user ENCODING ''UTF8'''
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'journal')\gexec
+SELECT 'CREATE DATABASE journal_test OWNER journal_user ENCODING ''UTF8'''
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'journal_test')\gexec
+"@
 }
 finally {
-    Copy-Item $bak $hba -Force
-    Restart-Service $svc
+    Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 }
 
-Set-Content $envFile "DATABASE_URL=postgresql+psycopg://journal_user:$appPw@localhost:5432/journal" -Encoding ascii
-Write-Host "Done: database 'journal' created, pg_hba.conf restored, .env written to $envFile"
+Set-Content $envFile @(
+    "DATABASE_URL=postgresql+psycopg://journal_user:$appPw@localhost:5432/journal",
+    "TEST_DATABASE_URL=postgresql+psycopg://journal_user:$appPw@localhost:5432/journal_test"
+) -Encoding ascii
+Write-Host "Done: role journal_user, databases journal and journal_test are ready; .env written to $envFile"

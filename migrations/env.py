@@ -14,8 +14,12 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+if config.config_file_name is not None and not config.attributes.get("skip_logging_config"):
     fileConfig(config.config_file_name)
+
+# URL можна передати програмно (так роблять тести для бази journal_test),
+# інакше береться робоча база з .env.
+TARGET_URL = config.attributes.get("database_url") or database_url()
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -41,7 +45,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = database_url()
+    url = TARGET_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -60,7 +64,7 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = create_engine(database_url(), poolclass=pool.NullPool)
+    connectable = create_engine(TARGET_URL, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

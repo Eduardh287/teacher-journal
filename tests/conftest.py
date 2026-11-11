@@ -1,16 +1,37 @@
-"""Спільні фікстури: кожен тест працює в транзакції, яка завжди відкочується."""
+"""Спільні фікстури.
+
+Тести працюють ТІЛЬКИ з окремою базою TEST_DATABASE_URL (journal_test) — робоча база
+з даними учнів не використовується ніколи. Перед тестами до тестової бази
+застосовуються міграції Alembic, а кожен тест іде в транзакції з відкатом.
+"""
 from dataclasses import dataclass
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from journal.db import engine
+from journal import db
+from journal.config import PROJECT_ROOT, test_database_url
 from journal.models import Journal, SchoolClass, Student, Subject, Teacher
 
 
+@pytest.fixture(scope="session")
+def engine():
+    """Engine тестової бази з актуальною схемою (alembic upgrade head)."""
+    url = test_database_url()
+    cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+    cfg.attributes["database_url"] = url
+    cfg.attributes["skip_logging_config"] = True
+    command.upgrade(cfg, "head")
+    test_engine = db.init_engine(url)  # session_scope() у коді теж дивиться в тестову базу
+    yield test_engine
+    test_engine.dispose()
+
+
 @pytest.fixture
-def session():
+def session(engine):
     """Сесія в SAVEPOINT-режимі: зовнішня транзакція відкочується, дані в БД не лишаються."""
     connection = engine.connect()
     outer = connection.begin()
