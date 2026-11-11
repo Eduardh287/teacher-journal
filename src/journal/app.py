@@ -4,6 +4,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
+from journal.config import ConfigError
 from journal.db import session_scope
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
@@ -21,7 +22,7 @@ def main() -> None:
     try:
         with session_scope() as session:
             first_run = not AuthService(session).has_any_teacher()
-    except RuntimeError as error:  # не налаштовано .env — показуємо конкретну причину
+    except ConfigError as error:  # не налаштовано .env — показуємо конкретну причину
         logging.exception("Застосунок не налаштовано")
         QMessageBox.critical(None, "Помилка налаштування", str(error))
         sys.exit(1)
