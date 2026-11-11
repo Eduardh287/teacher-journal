@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# Secrets and local config
+.env
+
+# ВАЖЛИВО: дані учнів (персональні дані неповнолітніх) ніколи не потрапляють у git
+*.sql
+*.dump
+*.backup
+pgdata/
+data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
