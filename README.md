@@ -54,16 +54,19 @@ tests/
    Можна запускати повторно. Якщо пароль `postgres` невідомий — додайте ключ `-ResetSuperuserPassword`:
    скрипт **змінить пароль `postgres`** і двічі перезапустить службу PostgreSQL
    (це вплине на інші локальні проєкти, які використовують цей сервер).
-3. Віртуальне середовище й залежності:
+3. Віртуальне середовище й залежності (точні версії — у `requirements.lock.txt`):
    ```
    python -m venv .venv
-   .venv\Scripts\python -m pip install -r requirements.txt
+   .venv\Scripts\python -m pip install -r requirements.lock.txt
    ```
 4. Створити таблиці: `.venv\Scripts\alembic upgrade head`
 5. Запуск застосунку: `.venv\Scripts\python run.py`
    (при першому запуску відкриється створення облікового запису викладача).
 6. Тести: `.venv\Scripts\python -m pytest -q`
    (працюють лише з базою з `TEST_DATABASE_URL` і самі застосовують до неї міграції).
+
+Тести автоматично запускаються на GitHub (GitHub Actions, Windows + PostgreSQL) для кожного PR.
+Журнал роботи застосунку: `%LOCALAPPDATA%\teacher-journal\logs\journal.log` (без паролів та імен учнів).
 
 ## Схема БД
 
