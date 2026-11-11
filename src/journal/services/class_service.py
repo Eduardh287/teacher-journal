@@ -7,6 +7,7 @@
 - кожен метод перевіряє, що клас/учень належить викладачу teacher_id.
 """
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
@@ -22,14 +23,21 @@ MAX_STUDENT_NAME = 150
 MAX_STUDENTS_PER_CLASS = 60
 
 _YEAR_RE = re.compile(r"^(\d{4})-(\d{4})$")
-_LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*[.)]?\s+")
+# «1. Ім'я», «2) Ім'я», «3 Ім'я», «4.Ім'я» → «Ім'я»
+_LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*(?:[.)]\s*|\s+)")
 _APOSTROPHES = str.maketrans({"’": "'", "ʼ": "'", "`": "'"})
+# Невидимі символи, які трапляються в тексті з PDF/Word/macOS: zero-width, BOM, м'який перенос.
+_INVISIBLE = str.maketrans({c: None for c in "​‌‍⁠﻿­"})
 
 RemovalMode = Literal["delete", "archive"]
 
 
 class ClassError(Exception):
     """Помилка з повідомленням, яке можна показати користувачу."""
+
+
+class ClassNotFound(ClassError):
+    """Клас не існує або належить іншому викладачу."""
 
 
 # ---------- Об'єкти для інтерфейсу (не ORM, щоб UI не залежав від сесії БД) ----------
@@ -74,15 +82,22 @@ def school_year_choices(today: date) -> list[str]:
 
 
 def normalize_name(text: str) -> str:
-    """Прибирає зайві пробіли й табуляції, уніфікує апострофи."""
-    return " ".join(text.translate(_APOSTROPHES).split())
+    """Прибирає зайві пробіли й невидимі символи, уніфікує апострофи.
+
+    NFC: «й»/«ї», вставлені з PDF чи macOS як «и» + знак, стають однією літерою —
+    інакше вони сортувалися б неправильно і не розпізнавалися як дублікати.
+    """
+    text = unicodedata.normalize("NFC", text).translate(_INVISIBLE).translate(_APOSTROPHES)
+    return " ".join(text.split())
 
 
 def _parse_lines(text: str) -> list[tuple[int, str]]:
     """(номер рядка, ім'я) для кожного непорожнього рядка; нумерацію на початку прибирає."""
     result = []
     for line_no, raw in enumerate(text.splitlines(), start=1):
-        name = normalize_name(_LEADING_NUMBER_RE.sub("", raw.replace("\t", " "), count=1))
+        # Невидимі символи прибираємо ДО пошуку номера: BOM на початку рядка заважав би йому.
+        line = raw.translate(_INVISIBLE).replace("\t", " ")
+        name = normalize_name(_LEADING_NUMBER_RE.sub("", line, count=1))
         if name:
             result.append((line_no, name))
     return result
@@ -249,7 +264,7 @@ class ClassService:
     def _own_class(self, teacher_id: int, class_id: int, editable: bool = False) -> SchoolClass:
         school_class = self.repo.get_class(class_id)
         if school_class is None or school_class.teacher_id != teacher_id:
-            raise ClassError("Клас не знайдено")
+            raise ClassNotFound("Клас не знайдено")
         if editable and school_class.archived:
             raise ClassError("Клас в архіві — спершу поверніть його")
         return school_class
@@ -260,10 +275,8 @@ class ClassService:
             raise ClassError("Учня не знайдено")
         try:
             self._own_class(teacher_id, student.class_id, editable=editable)
-        except ClassError as error:
-            if str(error) == "Клас не знайдено":
-                raise ClassError("Учня не знайдено") from None
-            raise
+        except ClassNotFound:
+            raise ClassNotFound("Учня не знайдено") from None
         return student
 
     def _ensure_unique_class(
@@ -300,8 +313,9 @@ class ClassService:
     def _renumber(self, class_id: int) -> None:
         """Інваріант: активні учні мають номери 1..N за алфавітом, вибулі — 0."""
         students = self.repo.students(class_id)
+        # id — для стабільного порядку, якщо імена відрізняються лише апострофом.
         active = sorted((s for s in students if not s.archived),
-                        key=lambda s: ukrainian_sort_key(s.full_name))
+                        key=lambda s: (ukrainian_sort_key(s.full_name), s.id))
         for number, student in enumerate(active, start=1):
             student.position = number
         for student in students:

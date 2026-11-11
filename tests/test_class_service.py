@@ -20,6 +20,7 @@ from journal.services.class_service import (
     ClassService,
     ImportResult,
     default_school_year,
+    normalize_name,
     parse_student_list,
     school_year_choices,
 )
@@ -478,3 +479,22 @@ def test_restored_class_accepts_students(svc, teacher, klass):
     svc.set_class_archived(teacher.id, klass.id, True)
     svc.set_class_archived(teacher.id, klass.id, False)
     assert svc.add_student(teacher.id, klass.id, "Петренко").position == 1
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("1.Коваленко Олена", "Коваленко Олена"),
+        ("12)Бойко Марія", "Бойко Марія"),
+        ("\ufeff3 Гнатюк\u200b Іван", "Гнатюк Іван"),
+    ],
+)
+def test_parse_student_list_compact_numbering_and_invisible_chars(raw, expected):
+    assert parse_student_list(raw) == [expected]
+
+
+def test_normalize_name_nfc_makes_decomposed_letters_equal():
+    """«й» з PDF (и + знак) і звичайна «й» дають однаковий результат."""
+    decomposed = "Йосипенко".replace("Й", "И\u0306")
+    assert decomposed != "Йосипенко"
+    assert normalize_name(decomposed) == "Йосипенко"
