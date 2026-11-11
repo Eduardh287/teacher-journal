@@ -75,12 +75,38 @@ QLabel[error="true"] { color: $danger; background: $danger_soft; border-radius: 
 /* Картки */
 QFrame#Card { background: $surface; border: 1px solid $border; border-radius: 12px; }
 
+/* Картка класу: така сама, як Card, але з підсвіткою рамки при наведенні */
+QFrame#ClassCard { background: $surface; border: 1px solid $border; border-radius: 12px; }
+QFrame#ClassCard:hover { border: 1px solid $accent; }
+QLabel#CardBig { font-size: 16pt; font-weight: 600; background: transparent; }
+QLabel#Badge { background: $accent_soft; color: $accent; border-radius: 6px; padding: 2px 8px; font-size: 9pt; font-weight: 600; }
+
 /* Поля вводу */
-QLineEdit, QComboBox {
+QLineEdit, QComboBox, QPlainTextEdit {
     background: $input_bg; border: 1px solid $border; border-radius: 8px;
     padding: 8px 10px; selection-background-color: $accent; selection-color: $accent_text;
 }
-QLineEdit:focus, QComboBox:focus { border: 1px solid $accent; }
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid $accent; }
+
+/* Прапорець */
+QCheckBox { spacing: 8px; }
+
+/* Таблиця учнів */
+QTableWidget {
+    background: $surface; border: 1px solid $border; border-radius: 12px;
+    gridline-color: $border; outline: 0; selection-background-color: $accent_soft; selection-color: $text;
+}
+QTableWidget::item { padding: 6px 10px; border-bottom: 1px solid $border; }
+QTableWidget::item:selected { background: $accent_soft; color: $text; }
+QHeaderView { background: transparent; }
+QHeaderView::section {
+    background: $surface; color: $muted; border: none; border-bottom: 1px solid $border;
+    padding: 8px 10px; font-weight: 600; font-size: 9pt;
+}
+
+/* Прозора область прокрутки */
+QScrollArea { background: transparent; border: none; }
+QScrollArea > QWidget > QWidget { background: transparent; }
 
 /* Кнопки */
 QPushButton {
