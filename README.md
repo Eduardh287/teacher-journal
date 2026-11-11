@@ -6,6 +6,13 @@
 
 Дипломний пет-проєкт.
 
+## Скриншоти
+
+| Вхід | Головне вікно |
+|---|---|
+| ![Вхід](docs/screenshots/login_light.png) | ![Головне вікно](docs/screenshots/main_light.png) |
+| ![Реєстрація, темна тема](docs/screenshots/register_dark.png) | ![Налаштування, темна тема](docs/screenshots/settings_dark.png) |
+
 ## Стек
 
 - Python
@@ -48,7 +55,9 @@ tests/
    .venv\Scripts\python -m pip install -r requirements.txt
    ```
 4. Створити таблиці: `.venv\Scripts\alembic upgrade head`
-5. Тести: `.venv\Scripts\python -m pytest -q`
+5. Запуск застосунку: `.venv\Scripts\python run.py`
+   (при першому запуску відкриється створення облікового запису викладача).
+6. Тести: `.venv\Scripts\python -m pytest -q`
 
 ## Схема БД
 
