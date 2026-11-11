@@ -39,4 +39,28 @@ tests/
 
 ## Запуск (розробка)
 
-Буде додано після створення каркаса.
+1. Встановити PostgreSQL 17 і Python 3.12+.
+2. Від імені адміністратора: `powershell -ExecutionPolicy Bypass -File scripts\setup_dev_db.ps1`
+   (створює БД `journal`, користувача `journal_user` і файл `.env`).
+3. Віртуальне середовище й залежності:
+   ```
+   python -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements.txt
+   ```
+4. Створити таблиці: `.venv\Scripts\alembic upgrade head`
+5. Тести: `.venv\Scripts\python -m pytest -q`
+
+## Схема БД
+
+| Таблиця | Призначення |
+|---|---|
+| `teachers` | викладачі (логін, хеш пароля) |
+| `classes` | класи викладача на навчальний рік |
+| `students` | учні класу з порядковим номером |
+| `subjects` | довідник предметів |
+| `journals` | журнал = клас + предмет |
+| `lessons` | уроки журналу (дата, семестр, тема, тип) |
+| `lesson_entries` | учень × урок: відвідування, оцінка 1–12, коментар |
+| `final_grades` | семестрові й річні оцінки |
+
+Обмеження (оцінка 1–12, семестр 1/2, унікальність записів) перевіряються на рівні PostgreSQL.
