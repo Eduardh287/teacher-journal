@@ -21,6 +21,10 @@ def main() -> None:
     try:
         with session_scope() as session:
             first_run = not AuthService(session).has_any_teacher()
+    except RuntimeError as error:  # не налаштовано .env — показуємо конкретну причину
+        logging.exception("Застосунок не налаштовано")
+        QMessageBox.critical(None, "Помилка налаштування", str(error))
+        sys.exit(1)
     except Exception:
         logging.exception("Не вдалося підключитися до бази даних")
         QMessageBox.critical(

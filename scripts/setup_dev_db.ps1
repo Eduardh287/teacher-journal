@@ -28,7 +28,7 @@ $envFile = Join-Path (Split-Path $PSScriptRoot -Parent) '.env'
 function Read-Secret([string]$prompt, [switch]$Validate) {
     $secure = Read-Host $prompt -AsSecureString
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+    try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
     if ($Validate -and $plain -notmatch '^[A-Za-z0-9]{8,}$') {
         throw 'Password: latin letters and digits only, at least 8 characters.'
@@ -38,7 +38,8 @@ function Read-Secret([string]$prompt, [switch]$Validate) {
 
 function Invoke-Sql([string]$sql) {
     # SQL goes through stdin, so passwords never appear in the process list.
-    $sql | & $psql -U postgres -h 127.0.0.1 -d postgres -v ON_ERROR_STOP=1 -q -f -
+    # -w: never prompt for a password; -X: ignore any user psqlrc.
+    $sql | & $psql -U postgres -h 127.0.0.1 -d postgres -w -X -v ON_ERROR_STOP=1 -q -f -
     if ($LASTEXITCODE -ne 0) { throw "psql failed with exit code $LASTEXITCODE" }
 }
 
@@ -46,7 +47,9 @@ if ($ResetSuperuserPassword) {
     if (Test-Path $bak) {
         throw "Found $bak from an interrupted run. Restore it over pg_hba.conf manually, restart the '$svc' service, then run again."
     }
+    # Read both passwords BEFORE touching pg_hba.conf, so a typo can't leave a half-done setup.
     $newAdminPw = Read-Secret 'New password for superuser postgres' -Validate
+    $appPw = Read-Secret 'Password for app user journal_user (new or existing)' -Validate
     Copy-Item $hba $bak
     try {
         # One extra rule at the top: only user postgres, only from 127.0.0.1.
@@ -65,9 +68,8 @@ if ($ResetSuperuserPassword) {
 }
 else {
     $adminPw = Read-Secret 'Password of PostgreSQL superuser postgres'
+    $appPw = Read-Secret 'Password for app user journal_user (new or existing)' -Validate
 }
-
-$appPw = Read-Secret 'Password for app user journal_user (new or existing)' -Validate
 
 $env:PGPASSWORD = $adminPw
 try {
