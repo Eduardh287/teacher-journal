@@ -1,0 +1,123 @@
+from datetime import date
+
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    Enum,
+    ForeignKey,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from journal.models.base import Base, TimestampMixin
+from journal.models.enums import Attendance, FinalGradeKind, LessonType
+
+GRADE_RANGE = "grade BETWEEN 1 AND 12"
+
+
+def _text_enum(enum_cls, name: str) -> Enum:
+    """Зберігаємо enum як VARCHAR + CHECK, а не як тип PostgreSQL: простіше змінювати міграціями."""
+    return Enum(
+        enum_cls,
+        name=name,
+        native_enum=False,
+        create_constraint=True,
+        length=20,
+        values_callable=lambda e: [m.value for m in e],
+    )
+
+
+class Subject(Base):
+    """Предмет: математика, фізика (довідник)."""
+
+    __tablename__ = "subjects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+
+
+class Journal(TimestampMixin, Base):
+    """Журнал = клас + предмет на навчальний рік. Семестр визначається уроком."""
+
+    __tablename__ = "journals"
+    __table_args__ = (UniqueConstraint("class_id", "subject_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="RESTRICT"))
+
+    school_class: Mapped["SchoolClass"] = relationship(back_populates="journals")  # noqa: F821
+    subject: Mapped[Subject] = relationship()
+    lessons: Mapped[list["Lesson"]] = relationship(
+        back_populates="journal", order_by="Lesson.lesson_date", cascade="all, delete-orphan"
+    )
+    final_grades: Mapped[list["FinalGrade"]] = relationship(
+        back_populates="journal", cascade="all, delete-orphan"
+    )
+
+
+class Lesson(TimestampMixin, Base):
+    """Урок (стовпець у таблиці журналу)."""
+
+    __tablename__ = "lessons"
+    __table_args__ = (CheckConstraint("semester IN (1, 2)", name="semester"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("journals.id", ondelete="CASCADE"), index=True)
+    lesson_date: Mapped[date] = mapped_column(Date)
+    semester: Mapped[int] = mapped_column(SmallInteger)
+    topic: Mapped[str | None] = mapped_column(String(255))
+    lesson_type: Mapped[LessonType] = mapped_column(
+        _text_enum(LessonType, "lesson_type"), default=LessonType.REGULAR, server_default="regular"
+    )
+
+    journal: Mapped[Journal] = relationship(back_populates="lessons")
+    entries: Mapped[list["LessonEntry"]] = relationship(
+        back_populates="lesson", cascade="all, delete-orphan"
+    )
+
+
+class LessonEntry(Base):
+    """Клітинка журналу: учень × урок — відвідування, оцінка 1–12, коментар."""
+
+    __tablename__ = "lesson_entries"
+    __table_args__ = (CheckConstraint(GRADE_RANGE, name="grade_range"),)
+
+    lesson_id: Mapped[int] = mapped_column(
+        ForeignKey("lessons.id", ondelete="CASCADE"), primary_key=True
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    attendance: Mapped[Attendance] = mapped_column(
+        _text_enum(Attendance, "attendance"), default=Attendance.PRESENT, server_default="present"
+    )
+    grade: Mapped[int | None] = mapped_column(SmallInteger)
+    comment: Mapped[str | None] = mapped_column(Text)
+
+    lesson: Mapped[Lesson] = relationship(back_populates="entries")
+    student: Mapped["Student"] = relationship()  # noqa: F821
+
+
+class FinalGrade(Base):
+    """Підсумкова оцінка: за 1-й семестр, 2-й семестр або річна."""
+
+    __tablename__ = "final_grades"
+    __table_args__ = (CheckConstraint(GRADE_RANGE, name="grade_range"),)
+
+    journal_id: Mapped[int] = mapped_column(
+        ForeignKey("journals.id", ondelete="CASCADE"), primary_key=True
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[FinalGradeKind] = mapped_column(
+        _text_enum(FinalGradeKind, "final_grade_kind"), primary_key=True
+    )
+    grade: Mapped[int] = mapped_column(SmallInteger)
+
+    journal: Mapped[Journal] = relationship(back_populates="final_grades")
+    student: Mapped["Student"] = relationship()  # noqa: F821
