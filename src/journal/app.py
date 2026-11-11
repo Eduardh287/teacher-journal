@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from journal.config import ConfigError
 from journal.db import session_scope
+from journal.logging_setup import install_excepthook, setup_logging
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
 from journal.ui.main_window import MainWindow
@@ -13,7 +14,9 @@ from journal.ui.theme import apply_theme, load_theme_name
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    log_path = setup_logging()  # %LOCALAPPDATA%\teacher-journal\logs\journal.log
+    install_excepthook()
+    logging.info("Запуск застосунку; журнал: %s", log_path)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Електронний журнал")
