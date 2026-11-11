@@ -15,8 +15,15 @@ dist/
 *.sql
 *.dump
 *.backup
+*.bak
 pgdata/
 data/
+exports/
+backups/
+*.xlsx
+*.xls
+*.csv
+*.log
 
 # IDE / OS
 .vscode/

@@ -128,6 +128,34 @@ def test_delete_class_cascades(session, teacher_class):
     assert count(Journal, Journal.id, [journal_id]) == 0
 
 
+def test_delete_teacher_cascades_to_classes(session, teacher_class):
+    """Видалення викладача прибирає його класи та учнів (раніше падало з IntegrityError)."""
+    class_id = teacher_class.school_class.id
+    student_ids = [s.id for s in teacher_class.students]
+
+    session.delete(teacher_class.teacher)
+    session.flush()
+    session.expire_all()
+
+    assert session.get(SchoolClass, class_id) is None
+    remaining = session.scalar(
+        select(func.count()).select_from(Student).where(Student.id.in_(student_ids))
+    )
+    assert remaining == 0
+
+
+def test_invalid_attendance_rejected_by_db(session, teacher_class):
+    """Недопустиме значення відвідування відхиляє сама БД (CHECK-обмеження)."""
+    lesson = make_lesson(session, teacher_class)
+    with pytest.raises(IntegrityError):
+        with session.begin_nested():
+            session.execute(
+                insert(LessonEntry.__table__).values(
+                    lesson_id=lesson.id, student_id=teacher_class.students[0].id, attendance="maybe"
+                )
+            )
+
+
 def test_duplicate_class_name_same_year_rejected(session, teacher_class):
     """Той самий викладач не може мати два класи з однаковою назвою в одному році."""
     with pytest.raises(IntegrityError):
