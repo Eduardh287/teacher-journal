@@ -118,6 +118,7 @@ QTableWidget, QTableView {
 QTableWidget::item, QTableView::item { padding: 6px 10px; border-bottom: 1px solid $border; }
 QTableWidget::item:selected, QTableView::item:selected { background: $accent_soft; color: $text; }
 QHeaderView { background: transparent; }
+QTableView QTableCornerButton::section { background: $surface; border: none; }
 QHeaderView::section {
     background: $surface; color: $muted; border: none; border-bottom: 1px solid $border;
     padding: 8px 10px; font-weight: 600; font-size: 9pt;

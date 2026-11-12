@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from journal.services.auth_service import CurrentUser
 from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
+from journal.ui.journals_page import JournalsPage
 from journal.ui.widgets import brand_mark, button, card, label
 
 # (іконка, підпис у меню)
@@ -46,7 +47,8 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.classes_page = ClassesPage(current_user)
         self.pages.addWidget(self.classes_page)
-        self.pages.addWidget(self._build_journals_page())
+        self.journals_page = JournalsPage(current_user)
+        self.pages.addWidget(self.journals_page)
         self.pages.addWidget(self._build_settings_page())
 
         content = QWidget()
@@ -195,19 +197,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignHCenter)
         return frame
 
-    def _build_journals_page(self) -> QWidget:
-        page, layout = self._page("Журнали", "Відвідування та оцінки за кожним класом і предметом.")
-        layout.addWidget(
-            self._empty_state(
-                "book",
-                "Журналів поки немає",
-                "Журнал створюється для класу та предмета: математики або фізики.",
-                "Новий журнал",
-            )
-        )
-        layout.addStretch(1)
-        return page
-
     def _build_settings_page(self) -> QWidget:
         page, layout = self._page("Налаштування", "Вигляд застосунку.")
 
@@ -254,3 +243,4 @@ class MainWindow(QMainWindow):
         for refresh in self._icon_refreshers:
             refresh()
         self.classes_page.refresh_icons()
+        self.journals_page.refresh_icons()

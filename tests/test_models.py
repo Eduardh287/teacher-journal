@@ -104,34 +104,82 @@ def test_final_grades_semester_and_annual(session, teacher_class):
             )
 
 
-def test_delete_class_cascades(session, teacher_class):
-    """Видалення класу прибирає учнів, журнал, уроки та записи."""
-    tc = teacher_class
-    lesson = make_lesson(session, tc)
-    for st in tc.students:
-        session.add(LessonEntry(lesson=lesson, student=st, grade=8))
-    session.flush()
-    class_id, journal_id, lesson_id = tc.school_class.id, tc.journal.id, lesson.id
-    student_ids = [s.id for s in tc.students]
+def test_delete_class_with_journal_restricted(session, teacher_class):
+    """Клас із журналом видалити не можна: БД відмовляє (RESTRICT)."""
+    session.delete(teacher_class.school_class)
+    with pytest.raises(IntegrityError):
+        session.flush()
 
-    session.delete(tc.school_class)
+
+def test_delete_class_with_students_only(session, teacher_class):
+    """Клас без журналів видаляється разом з учнями."""
+    tc = teacher_class
+    session.delete(tc.journal)
+    session.flush()
+    class_id, student_ids = tc.school_class.id, [s.id for s in tc.students]
+    session.expire_all()
+
+    session.delete(session.get(SchoolClass, class_id))
     session.flush()
     session.expire_all()
 
-    def count(model, col, values):
-        return session.scalar(select(func.count()).select_from(model).where(col.in_(values)))
+    assert session.get(SchoolClass, class_id) is None
+    count = session.scalar(select(func.count()).select_from(Student).where(Student.id.in_(student_ids)))
+    assert count == 0
 
-    assert count(Student, Student.id, student_ids) == 0
-    assert count(SchoolClass, SchoolClass.id, [class_id]) == 0
-    assert count(Lesson, Lesson.id, [lesson_id]) == 0
-    assert count(LessonEntry, LessonEntry.lesson_id, [lesson_id]) == 0
-    assert count(Journal, Journal.id, [journal_id]) == 0
+
+def test_delete_journal_with_lessons_restricted(session, teacher_class):
+    """Журнал з уроками видалити не можна."""
+    make_lesson(session, teacher_class)
+    session.expire_all()
+    session.delete(session.get(Journal, teacher_class.journal.id))
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_delete_student_with_entry_restricted(session, teacher_class):
+    """Учня з відміткою видалити не можна."""
+    lesson = make_lesson(session, teacher_class)
+    student = teacher_class.students[0]
+    session.add(LessonEntry(lesson=lesson, student=student, grade=8))
+    session.flush()
+    session.delete(student)
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_delete_lesson_cascades_to_entries(session, teacher_class):
+    """Видалення уроку прибирає його клітинки."""
+    lesson = make_lesson(session, teacher_class)
+    session.add(LessonEntry(lesson=lesson, student=teacher_class.students[0], grade=8))
+    session.flush()
+    lesson_id = lesson.id
+    session.delete(lesson)
+    session.flush()
+    session.expire_all()
+    count = session.scalar(
+        select(func.count()).select_from(LessonEntry).where(LessonEntry.lesson_id == lesson_id)
+    )
+    assert count == 0
+
+
+def test_lessons_ordered_by_date_then_id(session, teacher_class):
+    """Journal.lessons віддає уроки за датою, а за однакової дати — за id."""
+    late = make_lesson(session, teacher_class, d=date(2026, 9, 10))
+    early = make_lesson(session, teacher_class, d=date(2026, 9, 2))
+    same = make_lesson(session, teacher_class, d=date(2026, 9, 10))
+    session.expire_all()
+    ids = [lesson.id for lesson in session.get(Journal, teacher_class.journal.id).lessons]
+    assert ids == [early.id, late.id, same.id]
 
 
 def test_delete_teacher_cascades_to_classes(session, teacher_class):
-    """Видалення викладача прибирає його класи та учнів (раніше падало з IntegrityError)."""
+    """Видалення викладача без журналів прибирає його класи та учнів."""
     class_id = teacher_class.school_class.id
     student_ids = [s.id for s in teacher_class.students]
+    session.delete(teacher_class.journal)
+    session.flush()
+    session.expire_all()
 
     session.delete(teacher_class.teacher)
     session.flush()
@@ -142,6 +190,13 @@ def test_delete_teacher_cascades_to_classes(session, teacher_class):
         select(func.count()).select_from(Student).where(Student.id.in_(student_ids))
     )
     assert remaining == 0
+
+
+def test_delete_teacher_with_journal_restricted(session, teacher_class):
+    """Викладача, у класу якого є журнал, видалити не можна."""
+    session.delete(teacher_class.teacher)
+    with pytest.raises(IntegrityError):
+        session.flush()
 
 
 def test_invalid_attendance_rejected_by_db(session, teacher_class):
