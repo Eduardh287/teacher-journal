@@ -3,6 +3,7 @@
 UI працює лише з JournalApi (через api_factory) та його DTO. За замовчуванням кожен виклик —
 окрема транзакція journal.db.session_scope(). JournalError ловимо ПОЗА блоком with (відкат).
 """
+from dataclasses import replace
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -367,6 +368,13 @@ class JournalsPage(QWidget):
         else:
             self.show_list()
 
+    def refresh(self) -> None:
+        """Оновлює сторінку при поверненні на неї (класи чи учні могли змінитися)."""
+        if self.stack.currentIndex() == 1:
+            self.reload_grid()
+        else:
+            self.show_list()
+
     def reload_grid(self, select_lesson_id: int | None = None) -> bool:
         """Підтягує таблицю семестру. Повертає False, якщо журнал недоступний."""
         self.grid_view.flush_pending()
@@ -454,6 +462,10 @@ class JournalsPage(QWidget):
         lesson = self._lesson(lesson_id)
         if lesson is None:
             return
+        # Кількість позначок рахуємо за поточною таблицею, а не за даними останнього
+        # завантаження: оцінки, щойно введені з клавіатури, теж мають захищати урок.
+        live_count = sum(1 for (_, lid) in self.grid_view.grid_model.cells if lid == lesson_id)
+        lesson = replace(lesson, entry_count=max(lesson.entry_count, live_count))
         if lesson.entry_count == 0:
             if not self._confirm(f"Видалити урок {lesson.lesson_date:%d.%m.%Y}?", "Видалити"):
                 return

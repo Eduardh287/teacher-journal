@@ -426,3 +426,35 @@ def test_ui_does_not_import_forbidden_layers():
         text = (root / name).read_text(encoding="utf-8")
         for bad in ("import sqlalchemy", "from sqlalchemy", "journal.models", "journal.repositories"):
             assert bad not in text, (name, bad)
+
+
+def test_delete_lesson_with_fresh_keyboard_marks_needs_typed_word(page, fake, monkeypatch):
+    """Регресія (рецензія Fable, PR #9): оцінки, введені щойно без перезавантаження,
+    теж вмикають підтвердження словом «видалити» — інакше урок зник би разом з ними."""
+    view = page.grid_view
+    column = view.grid_model.column_of(L1)
+    view.setCurrentIndex(view.grid_model.index(0, column))
+    type_text(view, "7")
+    view.setCurrentIndex(view.grid_model.index(1, column))
+    type_text(view, "н")
+    assert len(fake.calls_of("set_cell")) == 2
+    shown = {}
+
+    def fake_exec(self):
+        shown["count"] = self.lesson.entry_count
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(DeleteLessonDialog, "exec", fake_exec)
+    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("простий діалог замість захищеного"))
+    page._on_delete_lesson(L1)  # без reload_grid()
+    assert shown == {"count": 2}
+    assert fake.calls_of("delete_lesson") == []
+
+
+def test_returning_to_journals_page_refreshes_open_grid(page, fake):
+    """Повернення на сторінку оновлює відкритий журнал (дані могли змінитися на сторінці «Класи»)."""
+    fake.put_cell(S2, L1, "present", 9)  # змінено «десь іще», таблиця ще не знає
+    column = page.grid_view.grid_model.column_of(L1)
+    assert page.grid_view.grid_model.cell(1, column).grade is None
+    page.refresh()
+    assert page.grid_view.grid_model.cell(1, column).grade == 9

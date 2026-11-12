@@ -146,7 +146,7 @@ class FakeJournalService:
     def _topic(topic: str | None) -> str | None:
         topic = (topic or "").strip() or None
         if topic is not None and len(topic) > MAX_TOPIC:
-            raise JournalError(f"Тема задовга (максимум {MAX_TOPIC} символів)")
+            raise JournalError(f"Тема — не довше {MAX_TOPIC} символів")
         return topic
 
     def create_lesson(self, teacher_id, journal_id, lesson_date, lesson_type="regular", topic=None) -> LessonInfo:
@@ -194,7 +194,7 @@ class FakeJournalService:
             raise JournalError("Відсутньому учню не можна поставити оцінку")
         comment = (comment or "").strip() or None
         if comment is not None and len(comment) > MAX_COMMENT:
-            raise JournalError(f"Коментар задовгий (максимум {MAX_COMMENT} символів)")
+            raise JournalError(f"Коментар — не довше {MAX_COMMENT} символів")
         key = (student_id, lesson_id)
         if attendance == "present" and grade is None and comment is None:
             self.cells.pop(key, None)

@@ -246,6 +246,7 @@ class DeleteLessonDialog(QDialog):
 
     def __init__(self, lesson: LessonInfo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.lesson = lesson
         self.setWindowTitle("Видалити урок")
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
