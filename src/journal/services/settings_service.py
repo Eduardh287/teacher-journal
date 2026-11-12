@@ -2,11 +2,8 @@
 from sqlalchemy.orm import Session
 
 from journal.models import Journal, Teacher
-from journal.repositories.journal_repository import (
-    JournalRepository,
-    boundaries_of,
-    set_boundaries,
-)
+from journal.repositories.journal_repository import JournalRepository
+from journal.services.boundaries_rows import boundaries_of, set_boundaries
 from journal.services.journal_types import JournalError, LessonConflict, SemesterConflict
 from journal.services.semesters import SemesterBoundaries
 from journal.services.ua_sort import class_name_key, ukrainian_sort_key

@@ -169,3 +169,43 @@ def test_new_journals_unique_per_subject(roll, classes, journals, teacher, sessi
     roll.apply(teacher.id, AUGUST, copy_journals=True)
     assert session.scalar(select(Journal.id).join(Subject).where(Subject.name == "Математика").limit(1))
     assert [j.class_name for j in journals.list_journals(teacher.id)] == ["6-А"]
+
+
+def test_too_long_new_name_is_archived_not_promoted(session):
+    """«9…» на 20 символів дав би назву з 21 символу — лише архів, без помилки БД (рецензія Fable)."""
+    from datetime import date
+
+    from journal.models import Teacher
+    from journal.services.class_service import ClassService
+    from journal.services.rollover_service import RolloverService
+
+    teacher = Teacher(username="pytest_rlong", password_hash="x", full_name="Т")
+    session.add(teacher)
+    session.flush()
+    name = "9-А математичний пр."
+    assert len(name) == 20
+    ClassService(session).create_class(teacher.id, name, "2026-2027")
+    items = RolloverService(session).plan(teacher.id, date(2027, 8, 1))
+    assert [(i.class_name, i.action) for i in items] == [(name, "archive")]
+    RolloverService(session).apply(teacher.id, date(2027, 8, 1))  # не падає
+
+
+def test_two_classes_mapping_to_same_new_name(session):
+    """«9-А» і «09-А» в одному році → лише один новий «10-А»; другий клас лише архівується."""
+    from datetime import date
+
+    from journal.models import Teacher
+    from journal.services.class_service import ClassService
+    from journal.services.rollover_service import RolloverService
+
+    teacher = Teacher(username="pytest_rdup", password_hash="x", full_name="Т")
+    session.add(teacher)
+    session.flush()
+    cs = ClassService(session)
+    cs.create_class(teacher.id, "9-А", "2026-2027")
+    cs.create_class(teacher.id, "09-А", "2026-2027")
+    items = RolloverService(session).plan(teacher.id, date(2027, 8, 1))
+    assert sorted(i.target_exists for i in items) == [False, True]
+    RolloverService(session).apply(teacher.id, date(2027, 8, 1))  # не падає з IntegrityError
+    new = [c for c in cs.list_classes(teacher.id) if c.school_year == "2027-2028"]
+    assert [c.name for c in new] == ["10-А"]

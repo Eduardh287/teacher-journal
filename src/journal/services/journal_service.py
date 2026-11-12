@@ -8,7 +8,8 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from journal.models import Attendance, Journal, Lesson, LessonEntry, LessonType
-from journal.repositories.journal_repository import JournalRepository, boundaries_of, set_boundaries
+from journal.repositories.journal_repository import JournalRepository
+from journal.services.boundaries_rows import boundaries_of, set_boundaries
 from journal.services.class_service import StudentInfo
 from journal.services.journal_types import (
     MAX_COMMENT,
@@ -98,7 +99,7 @@ class JournalService:
         """Межі семестрів окремого журналу — лише для архівного класу.
 
         Журнали в роботі беруть межі з Налаштувань. Конфлікт з уроками → SemesterConflict.
-        Це єдиний запис, дозволений в журналі архівного класу.
+        Журнали архівного класу загалом редагуються (рішення автора 12.11.2026); заборонено лише їх видалення.
         """
         journal = self._own_journal(teacher_id, journal_id)
         if not journal.school_class.archived:

@@ -32,8 +32,10 @@ from PySide6.QtWidgets import (
 from journal.db import session_scope
 from journal.services.auth_service import CurrentUser
 from journal.services.class_service import ClassError, ClassInfo, ClassService, StudentInfo
+from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
+from journal.ui.journal_dialogs import conflict_text
 from journal.ui.widgets import button, card, label
 
 COLUMNS = 3  # кількість карток у рядку
@@ -119,6 +121,15 @@ class ClassesPage(QWidget):
                 result = action(ClassService(session))
         except ClassError as error:
             QMessageBox.warning(self, "Не вдалося виконати дію", str(error))
+            return False, None
+        except SemesterConflict as error:  # повернення класу з архіву (рецензія Fable, PR #11)
+            QMessageBox.warning(
+                self,
+                "Клас не повернуто з архіву",
+                conflict_text(error.conflicts)
+                + "\n\nМежі семестрів цих журналів можна змінити: "
+                "Журнали → журнал → «Ще» → «Налаштування журналу».",
+            )
             return False, None
         except Exception:
             logging.exception("Помилка під час роботи з класами")

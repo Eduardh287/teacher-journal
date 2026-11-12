@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 
 from journal.models import Journal, SchoolClass, Student
 from journal.repositories.class_repository import ClassRepository
-from journal.repositories.journal_repository import JournalRepository, boundaries_of, set_boundaries
-from journal.services.class_service import ClassService
+from journal.repositories.journal_repository import JournalRepository
+from journal.services.boundaries_rows import boundaries_of, set_boundaries
+from journal.services.class_service import MAX_CLASS_NAME, ClassService
 from journal.services.journal_types import JournalError
 from journal.services.semesters import next_school_year, rollover_due
 from journal.services.ua_sort import class_name_key, ukrainian_sort_key
@@ -55,6 +56,7 @@ class RolloverService:
 
     def apply(self, teacher_id: int, today: date, copy_journals: bool = False) -> list[RolloverItem]:
         """Виконує план в одній транзакції; повторний виклик нічого не робить.
+        Клас, що «відстав» на кілька років, просувається на один рік за запуск (наступний запуск — ще на рік).
         copy_journals=True — для нового класу створюються порожні журнали тих самих предметів."""
         items = self.plan(teacher_id, today)
         if not items:
@@ -88,10 +90,13 @@ class RolloverService:
         )
         match = _NAME_RE.match(c.name)
         grade = int(match.group(1)) if match else 0
-        if match and 1 <= grade < LAST_GRADE:
-            new_name = f"{grade + 1}{match.group(2)}"
+        new_name = f"{grade + 1}{match.group(2)}" if match else ""
+        # Задовга нова назва (9-А… на 20 символів → 10-А… на 21) — лише архів, без помилки БД.
+        if match and 1 <= grade < LAST_GRADE and len(new_name) <= MAX_CLASS_NAME:
             new_year = next_school_year(c.school_year)
-            exists = (new_name.casefold(), new_year) in taken
+            key = (new_name.casefold(), new_year)
+            exists = key in taken
+            taken.add(key)  # «9-А» і «09-А» обидва → «10-А»: другий отримає target_exists
             return RolloverItem(
                 c.id, c.name, c.school_year, "promote", new_name, new_year, exists, students, subjects
             )
