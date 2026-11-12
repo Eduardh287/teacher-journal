@@ -147,6 +147,7 @@ QPushButton {
     background: $surface; border: 1px solid $border; border-radius: 8px; padding: 8px 16px;
 }
 QPushButton:hover { background: $hover; }
+QPushButton:disabled { color: $muted; background: $bg; border: 1px dashed $border; }
 QPushButton[variant="primary"] { background: $accent; color: $accent_text; border: none; font-weight: 600; }
 QPushButton[variant="primary"]:hover { background: $accent_hover; }
 QPushButton[variant="primary"]:disabled { background: $border; color: $muted; }

@@ -1,4 +1,4 @@
-"""Діалоги сторінки «Журнали»: новий журнал, урок, коментар, підтвердження видалення уроку."""
+"""Діалоги сторінки «Журнали»: новий журнал, урок, коментар, підтвердження видалення уроку й журналу."""
 import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -150,6 +150,8 @@ class LessonDialog(_ApiDialog):
         journal_id: int,
         lesson: LessonInfo | None = None,
         parent: QWidget | None = None,
+        *,
+        focus_topic: bool = False,
     ) -> None:
         super().__init__("Редагування уроку" if lesson else "Новий урок", teacher_id, api_factory, parent)
         self.journal_id = journal_id
@@ -187,6 +189,9 @@ class LessonDialog(_ApiDialog):
         submit.setMinimumHeight(40)
         submit.clicked.connect(self._on_submit)
         self.body.addWidget(submit)
+        if focus_topic:  # подвійний клік по темі в панелі уроків: одразу правимо тему
+            self.topic_edit.setFocus()
+            self.topic_edit.selectAll()
 
     def _on_submit(self) -> None:
         qd = self.date_edit.date()
@@ -246,25 +251,18 @@ class CommentDialog(QDialog):
         return self.edit.toPlainText().strip()
 
 
-class DeleteLessonDialog(QDialog):
-    """Видалення уроку з оцінками: кнопка активується лише після введення слова «видалити»."""
+class _TypedConfirmDialog(QDialog):
+    """Підтвердження словом: кнопка «Видалити» активується лише після введення «видалити»."""
 
-    def __init__(self, lesson: LessonInfo, parent: QWidget | None = None) -> None:
+    def __init__(self, window_title: str, heading: str, text: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.lesson = lesson
-        self.setWindowTitle("Видалити урок")
+        self.setWindowTitle(window_title)
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
-        layout.addWidget(label("Видалити урок?", object_name="EmptyTitle"))
-        layout.addWidget(
-            label(
-                f"Урок {lesson.lesson_date:%d.%m.%Y} містить відміток і оцінок: {lesson.entry_count}. "
-                f"Їх буде видалено безповоротно. Щоб підтвердити, введіть «{DELETE_WORD}».",
-                wrap=True,
-            )
-        )
+        layout.addWidget(label(heading, object_name="EmptyTitle"))
+        layout.addWidget(label(f"{text} Щоб підтвердити, введіть «{DELETE_WORD}».", wrap=True))
         self.confirm_edit = QLineEdit()
         self.confirm_edit.setPlaceholderText(DELETE_WORD)
         self.confirm_edit.textChanged.connect(self._update)
@@ -283,3 +281,32 @@ class DeleteLessonDialog(QDialog):
 
     def _update(self, text: str) -> None:
         self.delete_button.setEnabled(text.strip().lower() == DELETE_WORD)
+
+
+class DeleteLessonDialog(_TypedConfirmDialog):
+    """Видалення уроку з оцінками (підтвердження словом «видалити»)."""
+
+    def __init__(self, lesson: LessonInfo, parent: QWidget | None = None) -> None:
+        self.lesson = lesson
+        super().__init__(
+            "Видалити урок",
+            "Видалити урок?",
+            f"Урок {lesson.lesson_date:%d.%m.%Y} містить відміток і оцінок: {lesson.entry_count}. "
+            "Їх буде видалено безповоротно.",
+            parent,
+        )
+
+
+class DeleteJournalDialog(_TypedConfirmDialog):
+    """Видалення журналу разом з усіма уроками, відмітками та оцінками."""
+
+    def __init__(self, journal: JournalInfo, lesson_count: int, parent: QWidget | None = None) -> None:
+        self.journal = journal
+        self.lesson_count = lesson_count
+        super().__init__(
+            "Видалити журнал",
+            "Видалити журнал?",
+            f"Журнал «{journal.class_name} · {journal.subject_name}» містить уроків: {lesson_count}. "
+            "Разом з ним буде безповоротно видалено всі уроки, відмітки та оцінки.",
+            parent,
+        )

@@ -129,14 +129,18 @@ def test_list_journals_other_teacher_sees_nothing(svc, other, journal):
 
 
 def test_candidates(svc, classes, teacher, session, klass):
-    math, phys = subject_id(session), subject_id(session, "Фізика")
+    # Кандидати — усі пари «клас × предмет» (предмети з довідника, включно з алгеброю й геометрією).
+    from journal.models import Subject
+
+    all_subjects = {s.id for s in session.query(Subject)}
+    math = subject_id(session)
     assert {(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)} == {
-        (klass.id, math), (klass.id, phys)
+        (klass.id, sid) for sid in all_subjects
     }
     svc.create_journal(teacher.id, klass.id, math)
-    assert [(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)] == [
-        (klass.id, phys)
-    ]
+    assert {(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)} == {
+        (klass.id, sid) for sid in all_subjects - {math}
+    }
     classes.set_class_archived(teacher.id, klass.id, True)
     assert svc.list_journal_candidates(teacher.id) == []
 
