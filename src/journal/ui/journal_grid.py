@@ -150,7 +150,7 @@ class JournalGridModel(QAbstractTableModel):
                 return lesson
             if role == Qt.ItemDataRole.ToolTipRole:
                 name = LESSON_TYPES[lesson.lesson_type][0]
-                text = f"{lesson.lesson_date:%d.%m.%Y} · {name}"
+                text = f"Урок № {section + 1} · {lesson.lesson_date:%d.%m.%Y} · {name}"
                 return f"{text}\n{lesson.topic}" if lesson.topic else text
             return None
         if not 0 <= section < len(self.students):

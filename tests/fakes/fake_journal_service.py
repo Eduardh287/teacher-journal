@@ -115,12 +115,14 @@ class FakeJournalService:
         self.journals.append(info)
         return info
 
-    def delete_journal(self, teacher_id: int, journal_id: int) -> None:
-        self._enter("delete_journal", journal_id)
+    def delete_journal(self, teacher_id: int, journal_id: int, with_contents: bool = False) -> None:
+        self._enter("delete_journal", journal_id, with_contents)
         if all(j.id != journal_id for j in self.journals):
             raise JournalNotFound("Журнал не знайдено")
-        if self.lessons:
+        if self.lessons and not with_contents:
             raise JournalError("У журналі є уроки чи оцінки — його не можна видалити")
+        self.lessons.clear()
+        self.cells.clear()
         self.journals = [j for j in self.journals if j.id != journal_id]
 
     def get_grid(self, teacher_id: int, journal_id: int, semester: int) -> GridData:

@@ -11,7 +11,7 @@ from datetime import date
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -41,11 +42,14 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.ui import icons, theme
-from journal.ui.journal_dialogs import DeleteLessonDialog, LessonDialog, NewJournalDialog
+from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
+from journal.ui.lesson_panel import LessonPanel
 from journal.ui.widgets import button, card, label
 
 COLUMNS = 3  # кількість карток у рядку
+PANEL_WIDTH = 340  # початкова ширина панелі уроків
+PANEL_MIN_WIDTH = 260
 BANNER_MS = 5000  # скільки видно повідомлення про помилку
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
 
@@ -290,11 +294,24 @@ class JournalsPage(QWidget):
             seg = button(text)
             seg.setProperty("segment", True)
             seg.setCheckable(True)
+            # Вибрана кнопка має жирний шрифт і стає ширшою — резервуємо місце, щоб текст не обрізався.
+            bold = seg.font()
+            bold.setBold(True)
+            seg.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(text) + 56)
             group.addButton(seg, number)
             bar.addWidget(seg)
             self.semester_buttons[number] = seg
         group.idClicked.connect(self._on_semester_clicked)
         bar.addStretch(1)
+        self.topics_btn = button("Теми уроків")
+        self.topics_btn.setProperty("segment", True)
+        self.topics_btn.setCheckable(True)
+        self.topics_btn.setChecked(True)
+        bold = self.topics_btn.font()
+        bold.setBold(True)
+        self.topics_btn.setMinimumWidth(QFontMetrics(bold).horizontalAdvance("Теми уроків") + 56)
+        self.topics_btn.toggled.connect(lambda shown: self.lesson_panel.setVisible(shown))
+        bar.addWidget(self.topics_btn)
         self.new_lesson_btn = button("Новий урок", variant="primary")
         self.new_lesson_btn.clicked.connect(self._on_new_lesson)
         self._icon_refreshers.append(
@@ -326,7 +343,20 @@ class JournalsPage(QWidget):
         self.grid_view.saver = self._save_cell
         self.grid_view.lesson_edit_requested.connect(self._on_edit_lesson)
         self.grid_view.lesson_delete_requested.connect(self._on_delete_lesson)
-        self.content_stack.addWidget(self.grid_view)            # 0
+        self.grid_view.selectionModel().currentColumnChanged.connect(self._on_grid_column_changed)
+        self.lesson_panel = LessonPanel()
+        self.lesson_panel.lesson_selected.connect(self._on_panel_lesson_selected)
+        self.lesson_panel.lesson_edit_requested.connect(lambda lid: self._on_edit_lesson(lid, focus_topic=True))
+        self.lesson_panel.lesson_delete_requested.connect(self._on_delete_lesson)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.grid_view)
+        self.splitter.addWidget(self.lesson_panel)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.lesson_panel.setMinimumWidth(PANEL_MIN_WIDTH)
+        self.splitter.setSizes([10000, PANEL_WIDTH])
+        self.content_stack.addWidget(self.splitter)             # 0
         self.content_stack.addWidget(self._build_empty_grid())  # 1
         layout.addWidget(self.content_stack, 1)
 
@@ -371,19 +401,22 @@ class JournalsPage(QWidget):
     def refresh(self) -> None:
         """Оновлює сторінку при поверненні на неї (класи чи учні могли змінитися)."""
         if self.stack.currentIndex() == 1:
-            self.reload_grid()
+            if not self.reload_grid():
+                self.show_list()
         else:
             self.show_list()
 
     def reload_grid(self, select_lesson_id: int | None = None) -> bool:
         """Підтягує таблицю семестру. Повертає False, якщо журнал недоступний."""
         self.grid_view.flush_pending()
+        keep = self._current_cell_ref()
         journal_id, semester = self._journal_id, self._semester
         ok, grid = self._call(lambda api: api.get_grid(self.teacher_id, journal_id, semester), banner=True)
         if not ok:
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
+        self.lesson_panel.set_lessons(grid.lessons, grid.journal.class_archived)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
         self.subtitle_label.setText(info.school_year + (" · клас в архіві, лише перегляд" if info.class_archived else ""))
@@ -402,7 +435,51 @@ class JournalsPage(QWidget):
         if select_lesson_id is not None:
             column = self.grid_view.grid_model.column_of(select_lesson_id)
             self.grid_view.select_cell(0, column)
+        else:
+            self._restore_cell(keep)
+        self._sync_panel()
         return True
+
+    def _current_cell_ref(self) -> tuple[int, int] | None:
+        """(id учня, id уроку) поточної клітинки — щоб після перезавантаження стати на ту саму."""
+        index = self.grid_view.currentIndex()
+        model = self.grid_view.grid_model
+        if not index.isValid() or index.row() >= len(model.students) or index.column() >= len(model.lessons):
+            return None
+        return model.students[index.row()].id, model.lessons[index.column()].id
+
+    def _restore_cell(self, ref: tuple[int, int] | None) -> None:
+        """Повертає курсор на клітинку (учень, урок); якщо її вже немає — на (0, 0)."""
+        model = self.grid_view.grid_model
+        row = column = 0
+        if ref is not None:
+            student_id, lesson_id = ref
+            found_row = next((i for i, s in enumerate(model.students) if s.id == student_id), -1)
+            found_column = model.column_of(lesson_id)
+            if found_row >= 0 and found_column >= 0:
+                row, column = found_row, found_column
+        self.grid_view.select_cell(row, column)
+
+    def _sync_panel(self) -> None:
+        """Підсвічує в панелі урок поточного стовпця таблиці."""
+        self._highlight_column(self.grid_view.currentIndex().column())
+
+    def _highlight_column(self, column: int) -> None:
+        model = self.grid_view.grid_model
+        self.lesson_panel.select_lesson(model.lessons[column].id if 0 <= column < len(model.lessons) else None)
+
+    def _on_grid_column_changed(self, current, _previous) -> None:
+        """Навігація в таблиці переміщує підсвітку в панелі (сигналів панель не надсилає)."""
+        self._highlight_column(current.column() if current.isValid() else -1)
+
+    def _on_panel_lesson_selected(self, lesson_id: int) -> None:
+        """Клік по рядку панелі: стовпець уроку в таблиці (рядок зберігаємо), фокус — у таблицю."""
+        column = self.grid_view.grid_model.column_of(lesson_id)
+        if column < 0:
+            return
+        row = self.grid_view.currentIndex().row()
+        self.grid_view.select_cell(row if row >= 0 else 0, column)
+        self.grid_view.setFocus()
 
     def _on_semester_clicked(self, semester: int) -> None:
         if semester == self._semester:
@@ -450,15 +527,19 @@ class JournalsPage(QWidget):
         self.reload_grid(select_lesson_id=lesson.id)
         self.grid_view.setFocus()
 
-    def _on_edit_lesson(self, lesson_id: int) -> None:
+    def _on_edit_lesson(self, lesson_id: int, focus_topic: bool = False) -> None:
+        self.grid_view.flush_pending()
         lesson = self._lesson(lesson_id)
         if lesson is None:
             return
-        dialog = LessonDialog(self.teacher_id, self._api_factory, self._journal_id, lesson, parent=self)
+        dialog = LessonDialog(
+            self.teacher_id, self._api_factory, self._journal_id, lesson, parent=self, focus_topic=focus_topic
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_info is not None:
             self._show_lesson(dialog.result_info)
 
     def _on_delete_lesson(self, lesson_id: int) -> None:
+        self.grid_view.flush_pending()
         lesson = self._lesson(lesson_id)
         if lesson is None:
             return
@@ -476,14 +557,30 @@ class JournalsPage(QWidget):
             self.reload_grid()
 
     def _on_delete_journal(self) -> None:
+        """«Видалити журнал»: порожній — звичайне підтвердження, з уроками — введення слова «видалити»."""
         if self._grid is None:
             return
+        self.grid_view.flush_pending()
         info = self._grid.journal
-        text = f"Видалити журнал «{info.class_name} · {info.subject_name}»? Цю дію не можна скасувати."
-        if not self._confirm(text, "Видалити"):
-            return
         journal_id = info.id
-        ok, _ = self._call(lambda api: api.delete_journal(self.teacher_id, journal_id), banner=True)
+        # Живу кількість уроків (обох семестрів) беремо зі свіжого списку, а не з кешу таблиці.
+        ok, journals = self._call(lambda api: api.list_journals(self.teacher_id, True), banner=True)
+        if not ok:
+            return
+        fresh = next((j for j in journals if j.id == journal_id), None)
+        if fresh is None:
+            self.show_list()
+            return
+        if fresh.lesson_count == 0:
+            text = f"Видалити журнал «{info.class_name} · {info.subject_name}»? Цю дію не можна скасувати."
+            if not self._confirm(text, "Видалити"):
+                return
+        elif DeleteJournalDialog(info, fresh.lesson_count, parent=self).exec() != QDialog.DialogCode.Accepted:
+            return
+        with_contents = fresh.lesson_count > 0
+        ok, _ = self._call(
+            lambda api: api.delete_journal(self.teacher_id, journal_id, with_contents=with_contents), banner=True
+        )
         if ok:
             self.show_list()
 
@@ -495,6 +592,7 @@ class JournalsPage(QWidget):
         """Перемальовує іконки та таблицю після зміни теми."""
         for refresh in self._icon_refreshers:
             refresh()
+        self.lesson_panel.refresh_theme()
         self.grid_view.viewport().update()
         self.grid_view.horizontalHeader().viewport().update()
         self.grid_view.verticalHeader().viewport().update()
