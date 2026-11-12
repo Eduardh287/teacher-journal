@@ -11,7 +11,7 @@ from datetime import date
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -290,6 +290,10 @@ class JournalsPage(QWidget):
             seg = button(text)
             seg.setProperty("segment", True)
             seg.setCheckable(True)
+            # Вибрана кнопка має жирний шрифт і стає ширшою — резервуємо місце, щоб текст не обрізався.
+            bold = seg.font()
+            bold.setBold(True)
+            seg.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(text) + 56)
             group.addButton(seg, number)
             bar.addWidget(seg)
             self.semester_buttons[number] = seg
