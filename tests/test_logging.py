@@ -2,6 +2,7 @@
 import logging
 import logging.handlers
 import sys
+import threading
 
 import pytest
 
@@ -53,6 +54,7 @@ def test_install_excepthook_logs_critical(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(logging_setup, "_original_excepthook", None)
     monkeypatch.setattr(sys, "excepthook", lambda *args: seen.append(args))
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)  # відновиться після тесту
     original = sys.excepthook
 
     log_path = logging_setup.setup_logging(tmp_path)
@@ -71,3 +73,32 @@ def test_install_excepthook_logs_critical(tmp_path, monkeypatch):
     assert "CRITICAL" in content
     assert "boom" in content
     assert len(seen) == 1  # попередній обробник викликано
+
+
+def test_detail_lines_with_row_data_are_redacted(tmp_path):
+    """Рядок PostgreSQL «DETAIL: Failing row contains (...)» не потрапляє в журнал."""
+    log_path = logging_setup.setup_logging(tmp_path)
+    # Ім'я в змінній: traceback показує рядок коду з raise, і воно не має бути в ньому буквально.
+    row = "(7, " + "Коваленко" + " Олена)"
+    message = "new row violates check constraint\nDETAIL:  Failing row contains " + row
+    try:
+        raise ValueError(message)
+    except ValueError:
+        logging.getLogger("x").exception("Помилка БД")
+    for handler in _our_handlers():
+        handler.flush()
+    text = log_path.read_text(encoding="utf-8")
+    assert "Коваленко" not in text
+    assert logging_setup.REDACTED in text
+
+
+def test_unwritable_log_dir_falls_back_to_stderr(tmp_path, monkeypatch):
+    """Якщо файл журналу не відкривається, застосунок не падає — лише stderr."""
+    def boom(*args, **kwargs):
+        raise PermissionError("no access")
+
+    monkeypatch.setattr(logging_setup, "RotatingFileHandler", boom)
+    assert logging_setup.setup_logging(tmp_path) is None
+    handlers = _our_handlers()
+    assert len(handlers) == 1
+    assert not isinstance(handlers[0], logging.handlers.RotatingFileHandler)
