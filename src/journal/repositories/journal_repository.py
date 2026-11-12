@@ -10,6 +10,7 @@ from journal.models import (
     SchoolClass,
     Student,
     Subject,
+    Teacher,
 )
 
 
@@ -18,6 +19,24 @@ class JournalRepository:
         self.session = session
 
     # --- журнали ---
+
+    def get_teacher(self, teacher_id: int) -> Teacher | None:
+        return self.session.get(Teacher, teacher_id)
+
+    def journals_of_class(self, class_id: int) -> list[Journal]:
+        return list(self.session.scalars(select(Journal).where(Journal.class_id == class_id)))
+
+    def lessons_of_journals(self, journal_ids: list[int]) -> list[Lesson]:
+        """Усі уроки журналів (для перевірки й перерахунку семестрів)."""
+        if not journal_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(Lesson)
+                .where(Lesson.journal_id.in_(journal_ids))
+                .order_by(Lesson.lesson_date, Lesson.id)
+            )
+        )
 
     def journals_for_teacher(self, teacher_id: int, include_archived: bool) -> list[Journal]:
         query = (

@@ -9,6 +9,7 @@ from datetime import date
 from typing import Literal, Protocol
 
 from journal.services.class_service import StudentInfo
+from journal.services.semesters import DEFAULT_BOUNDARIES, SemesterBoundaries, VacationDateError
 
 AttendanceCode = Literal["present", "absent", "sick", "late"]
 LessonTypeCode = Literal["regular", "test", "lab", "independent"]
@@ -29,13 +30,31 @@ class LessonNotFound(JournalError):
     """Урок не існує або належить іншому викладачу («Урок не знайдено»)."""
 
 
-def semester_for_date(d: date) -> int:
-    """Вересень–грудень → 1 семестр, січень–червень → 2. Липень і серпень — канікули."""
-    if 9 <= d.month <= 12:
-        return 1
-    if 1 <= d.month <= 6:
-        return 2
-    raise JournalError("Липень і серпень — канікули: уроки на ці дати не створюються")
+def semester_for_date(d: date, boundaries: SemesterBoundaries = DEFAULT_BOUNDARIES) -> int:
+    """Номер семестру для дати за межами семестрів (етап 5.2). Канікули → JournalError."""
+    try:
+        return boundaries.semester_for(d)
+    except VacationDateError as error:
+        raise JournalError(str(error)) from None
+
+
+@dataclass(frozen=True)
+class LessonConflict:
+    """Урок, який після зміни меж семестрів потрапив би в канікули."""
+
+    journal_id: int
+    class_name: str
+    school_year: str
+    subject_name: str
+    lesson_date: date
+
+
+class SemesterConflict(JournalError):
+    """Зміну меж не збережено: є уроки, що потрапляють у канікули (рішення автора)."""
+
+    def __init__(self, conflicts: list[LessonConflict]) -> None:
+        super().__init__("Зміну не збережено: уроки потрапляють у канікули")
+        self.conflicts = conflicts
 
 
 @dataclass(frozen=True)
@@ -48,6 +67,7 @@ class JournalInfo:
     subject_name: str
     class_archived: bool
     lesson_count: int
+    boundaries: SemesterBoundaries = DEFAULT_BOUNDARIES  # межі семестрів цього журналу
 
 
 @dataclass(frozen=True)
@@ -130,6 +150,13 @@ class JournalApi(Protocol):
     ) -> LessonInfo: ...
 
     def delete_lesson(self, teacher_id: int, lesson_id: int) -> None: ...
+
+    def set_journal_semesters(
+        self, teacher_id: int, journal_id: int, boundaries: SemesterBoundaries
+    ) -> JournalInfo:
+        """Межі семестрів окремого журналу — лише для архівного класу (журнали в роботі
+        беруть межі з Налаштувань). Конфлікт з уроками → SemesterConflict."""
+        ...
 
     def set_cell(
         self,

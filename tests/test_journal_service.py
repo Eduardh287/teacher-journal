@@ -296,18 +296,17 @@ def test_delete_lesson_removes_entries(svc, session, teacher, lesson, student_id
     assert left == 0
 
 
-def test_writes_on_archived_class_refused(svc, classes, teacher, klass, journal, lesson, student_ids):
+def test_archived_class_journal_stays_editable(svc, classes, teacher, klass, journal, lesson, student_ids):
+    """Рішення автора (12.11.2026): в архівному журналі можна виправляти оцінки й уроки;
+    заборонено лише видаляти журнал архівного класу."""
     classes.set_class_archived(teacher.id, klass.id, True)
-    msg = "Клас в архіві — журнал лише для перегляду"
-    with pytest.raises(JournalError, match=msg):
-        svc.create_lesson(teacher.id, journal.id, D1)
-    with pytest.raises(JournalError, match=msg):
-        svc.update_lesson(teacher.id, lesson.id, D1, "regular", None)
-    with pytest.raises(JournalError, match=msg):
-        svc.delete_lesson(teacher.id, lesson.id)
-    with pytest.raises(JournalError, match=msg):
-        svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 5, None)
-    assert svc.get_grid(teacher.id, journal.id, 1).journal.class_archived  # читати можна
+    created = svc.create_lesson(teacher.id, journal.id, D1)
+    svc.update_lesson(teacher.id, created.id, D1, "test", "Контрольна")
+    assert svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 5, None).grade == 5
+    svc.delete_lesson(teacher.id, created.id)
+    with pytest.raises(JournalError, match="Клас в архіві"):
+        svc.delete_journal(teacher.id, journal.id, with_contents=True)
+    assert svc.get_grid(teacher.id, journal.id, 1).journal.class_archived
 
 
 # ---------- get_grid ----------

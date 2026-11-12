@@ -106,6 +106,11 @@ QLineEdit, QComboBox, QPlainTextEdit {
     padding: 8px 10px; selection-background-color: $accent; selection-color: $accent_text;
 }
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid $accent; }
+QComboBox::drop-down { border: none; width: 26px; background: transparent; }
+QComboBox QAbstractItemView {
+    background: $surface; color: $text; border: 1px solid $border; outline: 0;
+    selection-background-color: $accent_soft; selection-color: $text;
+}
 
 /* Прапорець */
 QCheckBox { spacing: 8px; }
