@@ -5,6 +5,7 @@ from sqlalchemy import (
     Date,
     Enum,
     ForeignKey,
+    Index,
     SmallInteger,
     String,
     Text,
@@ -46,16 +47,21 @@ class Journal(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("class_id", "subject_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="RESTRICT"), index=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="RESTRICT"))
 
     school_class: Mapped["SchoolClass"] = relationship(back_populates="journals")  # noqa: F821
     subject: Mapped[Subject] = relationship()
+    # Журнал з уроками чи оцінками видаляти не можна: БД відмовляє (RESTRICT), а ORM
+    # не повинна ні видаляти дітей, ні обнуляти зовнішні ключі (passive_deletes="all").
     lessons: Mapped[list["Lesson"]] = relationship(
-        back_populates="journal", order_by="Lesson.lesson_date", cascade="all, delete-orphan"
+        back_populates="journal",
+        order_by="(Lesson.lesson_date, Lesson.id)",
+        cascade="save-update, merge",
+        passive_deletes="all",
     )
     final_grades: Mapped[list["FinalGrade"]] = relationship(
-        back_populates="journal", cascade="all, delete-orphan"
+        back_populates="journal", cascade="save-update, merge", passive_deletes="all"
     )
 
 
@@ -63,10 +69,13 @@ class Lesson(TimestampMixin, Base):
     """Урок (стовпець у таблиці журналу)."""
 
     __tablename__ = "lessons"
-    __table_args__ = (CheckConstraint("semester IN (1, 2)", name="semester"),)
+    __table_args__ = (
+        CheckConstraint("semester IN (1, 2)", name="semester"),
+        Index("ix_lessons_journal_semester_date", "journal_id", "semester", "lesson_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    journal_id: Mapped[int] = mapped_column(ForeignKey("journals.id", ondelete="CASCADE"), index=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("journals.id", ondelete="RESTRICT"))
     lesson_date: Mapped[date] = mapped_column(Date)
     semester: Mapped[int] = mapped_column(SmallInteger)
     topic: Mapped[str | None] = mapped_column(String(255))
@@ -90,7 +99,7 @@ class LessonEntry(Base):
         ForeignKey("lessons.id", ondelete="CASCADE"), primary_key=True
     )
     student_id: Mapped[int] = mapped_column(
-        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True, index=True
+        ForeignKey("students.id", ondelete="RESTRICT"), primary_key=True, index=True
     )
     attendance: Mapped[Attendance] = mapped_column(
         _text_enum(Attendance, "attendance"), default=Attendance.PRESENT, server_default="present"
@@ -109,10 +118,10 @@ class FinalGrade(Base):
     __table_args__ = (CheckConstraint(GRADE_RANGE, name="grade_range"),)
 
     journal_id: Mapped[int] = mapped_column(
-        ForeignKey("journals.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("journals.id", ondelete="RESTRICT"), primary_key=True
     )
     student_id: Mapped[int] = mapped_column(
-        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("students.id", ondelete="RESTRICT"), primary_key=True
     )
     kind: Mapped[FinalGradeKind] = mapped_column(
         _text_enum(FinalGradeKind, "final_grade_kind"), primary_key=True

@@ -20,8 +20,9 @@ class SchoolClass(TimestampMixin, Base):
     students: Mapped[list["Student"]] = relationship(
         back_populates="school_class", order_by="Student.position", cascade="all, delete-orphan"
     )
+    # Клас із журналами видаляти не можна (RESTRICT у БД); ORM журналів не чіпає.
     journals: Mapped[list["Journal"]] = relationship(  # noqa: F821
-        back_populates="school_class", cascade="all, delete-orphan"
+        back_populates="school_class", cascade="save-update, merge", passive_deletes="all"
     )
 
 
