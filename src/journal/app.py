@@ -16,7 +16,7 @@ from journal.ui.theme import apply_theme, load_theme_name
 def main() -> None:
     log_path = setup_logging()  # %LOCALAPPDATA%\teacher-journal\logs\journal.log
     install_excepthook()
-    logging.info("Запуск застосунку; журнал: %s", log_path)
+    logging.info("Запуск застосунку; журнал: %s", log_path or "лише stderr")
 
     app = QApplication(sys.argv)
     app.setApplicationName("Електронний журнал")

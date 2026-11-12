@@ -8,11 +8,12 @@ from sqlalchemy.engine import make_url
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
+
 class ConfigError(RuntimeError):
     """Застосунок не налаштовано (немає або неправильний .env)."""
 
 
-_SETUP_HINT ="Запустіть scripts/setup_dev_db.ps1 або скопіюйте .env.example у .env."
+_SETUP_HINT = "Запустіть scripts/setup_dev_db.ps1 або скопіюйте .env.example у .env."
 
 
 def database_url() -> str:

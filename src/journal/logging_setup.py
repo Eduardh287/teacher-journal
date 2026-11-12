@@ -5,7 +5,9 @@
 """
 import logging
 import os
+import re
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -18,6 +20,19 @@ BACKUP_COUNT = 5
 _HANDLER_TAG = "_teacher_journal_handler"
 
 _original_excepthook = None
+
+# PostgreSQL додає до помилок рядок «DETAIL: Failing row contains (...)» з даними рядка —
+# там можуть бути імена учнів чи хеш пароля. Такі рядки в журнал не потрапляють.
+# Префікс залежить від мови сервера (lc_messages): англійська, українська, російська.
+_DETAIL_LINE = re.compile(r"^\s*(?:DETAIL|ПОДРОБИЦІ|ДЕТАЛІ|ПОДРОБНОСТИ):.*$", re.MULTILINE)
+REDACTED = "DETAIL: [приховано]"
+
+
+class RedactingFormatter(logging.Formatter):
+    """Форматувальник, що прибирає з тексту помилок дані рядків БД."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _DETAIL_LINE.sub(REDACTED, super().format(record))
 
 
 def log_dir() -> Path:
@@ -43,37 +58,39 @@ def _remove_our_handlers(root: logging.Logger) -> None:
             handler.close()
 
 
-def setup_logging(directory: Path | None = None) -> Path:
+def setup_logging(directory: Path | None = None) -> Path | None:
     """Налаштовує кореневий логер (рівень INFO) і повертає шлях до файлу журналу.
 
     Повторний виклик безпечний: попередні обробники цього модуля замінюються,
     дублікати не з'являються.
     """
-    target_dir = Path(directory) if directory is not None else log_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-    log_path = target_dir / LOG_FILE_NAME
-
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     _remove_our_handlers(root)
 
-    formatter = logging.Formatter(LOG_FORMAT)
-
-    file_handler = RotatingFileHandler(
-        log_path,
-        maxBytes=MAX_BYTES,
-        backupCount=BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(formatter)
-    setattr(file_handler, _HANDLER_TAG, True)
+    formatter = RedactingFormatter(LOG_FORMAT)
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
     setattr(stream_handler, _HANDLER_TAG, True)
-
-    root.addHandler(file_handler)
     root.addHandler(stream_handler)
+
+    # Якщо файл журналу недоступний (немає прав, файл заблоковано) — застосунок
+    # однаково запускається, просто пише лише в stderr.
+    try:
+        target_dir = Path(directory) if directory is not None else log_dir()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        log_path = target_dir / LOG_FILE_NAME
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8"
+        )
+    except OSError:
+        logging.getLogger(__name__).warning("Файл журналу недоступний — пишу лише в stderr")
+        return None
+
+    file_handler.setFormatter(formatter)
+    setattr(file_handler, _HANDLER_TAG, True)
+    root.addHandler(file_handler)
     return log_path
 
 
@@ -97,3 +114,16 @@ def install_excepthook() -> None:
         previous_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = _hook
+
+    # Винятки у фонових потоках (з'являться, наприклад, для резервних копій) теж у журнал.
+    def _thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
+        if not issubclass(args.exc_type, KeyboardInterrupt):
+            logging.critical(
+                "Необроблений виняток у потоці %s",
+                getattr(args.thread, "name", "?"),
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+
+    threading.excepthook = _thread_hook
