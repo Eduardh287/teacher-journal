@@ -7,6 +7,7 @@
 - Journals of non-archived classes follow the global setting; archived journals keep their boundaries and can be changed only manually per journal.
 - A boundary change that would put an existing lesson into vacation is REFUSED, listing the lessons.
 - Rollover: automatic with a confirmation dialog, offered from **1 August** (`semesters.rollover_due`). 9-А → NEW class 10-А for the next year with the same active students; old class + journals archived unchanged; 11th grade and classes without a leading number → archive. The dialog has a checkbox **«Створити такі самі журнали для нових класів»** (`apply(..., copy_journals=True)` creates empty journals for the same subjects). Re-formed classes (renamed letter/roster) are fixed by the teacher afterwards — no editing in the dialog.
+- **Later author decision (12.11.2026): archived journals stay EDITABLE** (grades, marks, lessons incl. past dates); only deleting a journal of an archived class and creating journals for it are refused. This overrides «read-only» wording below.
 - Validation (orchestrator, follows from "rollover from August"): semester I starts in Aug or later, semester II ends before August.
 
 ## 1. Contract (already committed by the orchestrator — do not change signatures without asking)

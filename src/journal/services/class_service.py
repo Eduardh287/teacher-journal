@@ -316,7 +316,7 @@ class ClassService:
     def _resync_boundaries(self, school_class: SchoolClass) -> None:
         """Журнали повернутого класу беруть глобальні межі викладача."""
         # Імпорт тут: settings_service залежить від journal_types, а той — від цього модуля.
-        from journal.repositories.journal_repository import boundaries_of
+        from journal.services.boundaries_rows import boundaries_of
         from journal.services.settings_service import apply_boundaries
 
         journals = self.repo.journals_of_class(school_class.id)
