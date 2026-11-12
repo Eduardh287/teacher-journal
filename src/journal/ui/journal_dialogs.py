@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
     QComboBox,
+    QCalendarWidget,
     QDateEdit,
     QDialog,
     QHBoxLayout,
@@ -157,6 +158,10 @@ class LessonDialog(_ApiDialog):
 
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
+        # Номери тижнів (44, 45…) викладачці не потрібні.
+        self.date_edit.calendarWidget().setVerticalHeaderFormat(
+            QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
+        )
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         start = lesson.lesson_date if lesson else date.today()
         self.date_edit.setDate(QDate(start.year, start.month, start.day))
