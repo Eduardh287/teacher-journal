@@ -81,7 +81,8 @@ class JournalGridModel(QAbstractTableModel):
         self.students = list(grid.students)
         self.lessons = list(grid.lessons)
         self.cells = dict(grid.cells)
-        self.read_only = grid.journal.class_archived
+        # Архівний журнал редагується (рішення автора); лише рядки вибулих учнів — для перегляду.
+        self.read_only = False
         self.pending = None
         self.endResetModel()
 
