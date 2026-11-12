@@ -423,13 +423,13 @@ class JournalsPage(QWidget):
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
-        self.lesson_panel.set_lessons(grid.lessons, grid.journal.class_archived)
+        self.lesson_panel.set_lessons(grid.lessons, False)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
-        self.subtitle_label.setText(info.school_year + (" · клас в архіві, лише перегляд" if info.class_archived else ""))
+        self.subtitle_label.setText(info.school_year + (" · клас в архіві" if info.class_archived else ""))
         self.semester_buttons[grid.semester].setChecked(True)
-        self.new_lesson_btn.setVisible(not info.class_archived)
-        self.new_lesson_shortcut.setEnabled(not info.class_archived)
+        self.new_lesson_btn.setVisible(True)
+        self.new_lesson_shortcut.setEnabled(True)
         self.delete_journal_action.setEnabled(not info.class_archived)
 
         if not grid.students:
@@ -437,7 +437,7 @@ class JournalsPage(QWidget):
             self.empty_lesson_btn.hide()
         elif not grid.lessons:
             self.empty_label.setText("Уроків у цьому семестрі ще немає")
-            self.empty_lesson_btn.setVisible(not info.class_archived)
+            self.empty_lesson_btn.setVisible(True)
         self.content_stack.setCurrentIndex(0 if grid.students and grid.lessons else 1)
         if select_lesson_id is not None:
             column = self.grid_view.grid_model.column_of(select_lesson_id)
@@ -519,7 +519,7 @@ class JournalsPage(QWidget):
 
     def new_lesson_today(self) -> None:
         """Ctrl+N: звичайний урок на сьогодні без діалогу."""
-        if self._grid is None or self._grid.journal.class_archived:
+        if self._grid is None:
             return
         journal_id = self._journal_id
         ok, lesson = self._call(

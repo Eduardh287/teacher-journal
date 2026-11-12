@@ -29,7 +29,9 @@ from journal.services.semesters import SemesterBoundaries, SemesterError
 from journal.services.settings_service import apply_boundaries
 from journal.services.ua_sort import class_name_key, ukrainian_sort_key
 
-ARCHIVED_WRITE = "Клас в архіві — журнал лише для перегляду"
+# Архівний журнал редагується (оцінки, відмітки, уроки) — рішення автора 12.11.2026.
+# Заборонено лише видаляти журнал архівного класу та створювати нові журнали для нього.
+ARCHIVED_WRITE = "Клас в архіві — журнал не можна видалити; спершу поверніть клас"
 
 
 class JournalService:
@@ -147,7 +149,7 @@ class JournalService:
         lesson_type: LessonTypeCode = "regular",
         topic: str | None = None,
     ) -> LessonInfo:
-        journal = self._own_journal(teacher_id, journal_id, editable=True)
+        journal = self._own_journal(teacher_id, journal_id)
         semester = _check_date(journal, lesson_date)
         lesson = Lesson(
             journal_id=journal_id,
@@ -167,7 +169,7 @@ class JournalService:
         lesson_type: LessonTypeCode,
         topic: str | None,
     ) -> LessonInfo:
-        lesson = self._own_lesson(teacher_id, lesson_id, editable=True)
+        lesson = self._own_lesson(teacher_id, lesson_id)
         semester = _check_date(lesson.journal, lesson_date)
         new_type = _lesson_type(lesson_type)
         new_topic = _clean_topic(topic)
@@ -179,7 +181,7 @@ class JournalService:
         return _lesson_info(lesson, self.repo.entry_count(lesson_id))
 
     def delete_lesson(self, teacher_id: int, lesson_id: int) -> None:
-        lesson = self._own_lesson(teacher_id, lesson_id, editable=True)
+        lesson = self._own_lesson(teacher_id, lesson_id)
         self.repo.delete(lesson)  # клітинки зникають каскадом (FK lesson_id → CASCADE)
 
     # --- клітинки ---
@@ -194,7 +196,7 @@ class JournalService:
         comment: str | None,
     ) -> CellInfo | None:
         """Повний стан клітинки. Порожній стан («присутній», без оцінки й коментаря) видаляє рядок."""
-        lesson = self._own_lesson(teacher_id, lesson_id, editable=True)
+        lesson = self._own_lesson(teacher_id, lesson_id)
         student = self.repo.get_student(student_id)
         if student is None or student.class_id != lesson.journal.class_id:
             raise JournalError("Учня не знайдено")

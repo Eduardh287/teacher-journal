@@ -22,7 +22,7 @@ from journal.services.journal_types import (
 )
 from journal.services.semesters import SemesterBoundaries
 
-ARCHIVED_CLASS_TEXT = "Клас в архіві — журнал лише для перегляду"
+ARCHIVED_CLASS_TEXT = "Клас в архіві — журнал не можна видалити; спершу поверніть клас"
 
 
 class FakeJournalService:
@@ -91,8 +91,7 @@ class FakeJournalService:
         raise LessonNotFound("Урок не знайдено")
 
     def _check_writable(self) -> None:
-        if self.journal.class_archived:
-            raise JournalError(ARCHIVED_CLASS_TEXT)
+        """Архівний журнал теж редагується (рішення автора 12.11.2026)."""
 
     # --- JournalApi ---
 

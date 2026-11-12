@@ -271,19 +271,20 @@ def test_archived_student_row_is_read_only(page, fake):
     assert cell_of(page, 2, 0) == CellInfo("present", None, None)
 
 
-def test_archived_class_is_read_only(make_page):
+def test_archived_class_journal_is_editable(make_page):
+    """Архівний журнал редагується (рішення автора); видалити його не можна."""
     service = FakeJournalService(["Коваленко Олена"], class_archived=True)
     service.add_lesson(date(2025, 9, 2))
     page = make_page(service)
-    assert page.grid_view.grid_model.read_only
-    assert not page.new_lesson_btn.isVisible()
-    assert page.menu_btn.isVisible()  # «Налаштування журналу» доступне й для архіву
+    assert not page.grid_view.grid_model.read_only
+    assert page.new_lesson_btn.isVisible()
+    assert page.menu_btn.isVisible()
     assert not page.delete_journal_action.isEnabled()
     page.grid_view.select_cell(0, 0)
     type_text(page.grid_view, "5")
-    assert service.calls_of("set_cell") == []
+    assert len(service.calls_of("set_cell")) == 1
     page.new_lesson_today()
-    assert service.calls_of("create_lesson") == []
+    assert len(service.calls_of("create_lesson")) == 1
 
 
 # --- уроки ---
