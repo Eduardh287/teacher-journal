@@ -277,7 +277,8 @@ def test_archived_class_is_read_only(make_page):
     page = make_page(service)
     assert page.grid_view.grid_model.read_only
     assert not page.new_lesson_btn.isVisible()
-    assert not page.menu_btn.isVisible()
+    assert page.menu_btn.isVisible()  # «Налаштування журналу» доступне й для архіву
+    assert not page.delete_journal_action.isEnabled()
     page.grid_view.select_cell(0, 0)
     type_text(page.grid_view, "5")
     assert service.calls_of("set_cell") == []

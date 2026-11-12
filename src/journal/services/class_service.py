@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from journal.models import SchoolClass, Student
 from journal.repositories.class_repository import ClassRepository
+from journal.repositories.journal_repository import JournalRepository
 from journal.services.ua_sort import class_name_key, ukrainian_sort_key
 
 MAX_CLASS_NAME = 20
@@ -169,7 +170,12 @@ class ClassService:
         return _class_info(school_class, self._active_count(class_id))
 
     def set_class_archived(self, teacher_id: int, class_id: int, archived: bool) -> None:
-        self._own_class(teacher_id, class_id).archived = archived
+        """Архівує клас чи повертає його. Повернення синхронізує межі семестрів його
+        журналів з Налаштуваннями; конфлікт з уроками → SemesterConflict, клас не повертається."""
+        school_class = self._own_class(teacher_id, class_id)
+        if school_class.archived and not archived:
+            self._resync_boundaries(school_class)
+        school_class.archived = archived
         self.repo.session.flush()
 
     def class_removal_mode(self, teacher_id: int, class_id: int) -> RemovalMode:
@@ -306,6 +312,21 @@ class ClassService:
                 seen.add(folded)
                 new_names.append(name)
         return new_names, skipped
+
+    def _resync_boundaries(self, school_class: SchoolClass) -> None:
+        """Журнали повернутого класу беруть глобальні межі викладача."""
+        # Імпорт тут: settings_service залежить від journal_types, а той — від цього модуля.
+        from journal.repositories.journal_repository import boundaries_of
+        from journal.services.settings_service import apply_boundaries
+
+        journals = self.repo.journals_of_class(school_class.id)
+        apply_boundaries(
+            JournalRepository(self.repo.session), journals, boundaries_of(school_class.teacher)
+        )
+
+    def renumber(self, class_id: int) -> None:
+        """Перенумерація активних учнів класу (для переходу на новий рік)."""
+        self._renumber(class_id)
 
     def _active_count(self, class_id: int) -> int:
         return sum(not s.archived for s in self.repo.students(class_id))

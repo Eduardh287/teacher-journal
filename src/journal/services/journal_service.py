@@ -8,7 +8,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from journal.models import Attendance, Journal, Lesson, LessonEntry, LessonType
-from journal.repositories.journal_repository import JournalRepository
+from journal.repositories.journal_repository import JournalRepository, boundaries_of, set_boundaries
 from journal.services.class_service import StudentInfo
 from journal.services.journal_types import (
     MAX_COMMENT,
@@ -25,6 +25,8 @@ from journal.services.journal_types import (
     LessonTypeCode,
     semester_for_date,
 )
+from journal.services.semesters import SemesterBoundaries, SemesterError
+from journal.services.settings_service import apply_boundaries
 from journal.services.ua_sort import class_name_key, ukrainian_sort_key
 
 ARCHIVED_WRITE = "Клас в архіві — журнал лише для перегляду"
@@ -67,6 +69,9 @@ class JournalService:
         if self.repo.journal_exists(class_id, subject_id):
             raise JournalError("Такий журнал уже існує")
         journal = Journal(class_id=class_id, subject_id=subject_id)
+        teacher = self.repo.get_teacher(teacher_id)
+        if teacher is not None:
+            set_boundaries(journal, boundaries_of(teacher))  # знімок глобальних меж
         self.repo.add(journal)
         return _journal_info(journal, 0)
 
@@ -78,12 +83,31 @@ class JournalService:
         видаляються підсумкові оцінки, уроки (з їхніми відмітками) і сам журнал.
         Без прапорця сервіс відмовляє — помилка в інтерфейсі не зітре оцінки.
         """
-        journal = self._own_journal(teacher_id, journal_id)
+        journal = self._own_journal(teacher_id, journal_id, editable=True)
         if self.repo.has_lessons_or_finals(journal_id):
             if not with_contents:
                 raise JournalError("У журналі є уроки чи оцінки — його не можна видалити")
             self.repo.delete_journal_contents(journal_id)
         self.repo.delete(journal)
+
+    def set_journal_semesters(
+        self, teacher_id: int, journal_id: int, boundaries: SemesterBoundaries
+    ) -> JournalInfo:
+        """Межі семестрів окремого журналу — лише для архівного класу.
+
+        Журнали в роботі беруть межі з Налаштувань. Конфлікт з уроками → SemesterConflict.
+        Це єдиний запис, дозволений в журналі архівного класу.
+        """
+        journal = self._own_journal(teacher_id, journal_id)
+        if not journal.school_class.archived:
+            raise JournalError("Межі семестрів журналу в роботі змінюються в Налаштуваннях")
+        try:
+            boundaries.validate()
+        except SemesterError as error:
+            raise JournalError(str(error)) from None
+        apply_boundaries(self.repo, [journal], boundaries)
+        count = self.repo.lesson_counts([journal_id]).get(journal_id, 0)
+        return _journal_info(journal, count)
 
     # --- таблиця ---
 
@@ -219,12 +243,11 @@ class JournalService:
 
 
 def _check_date(journal: Journal, lesson_date: date) -> int:
-    """Семестр за датою; дата має лежати в навчальному році класу."""
-    semester = semester_for_date(lesson_date)
+    """Семестр за датою й межами журналу; дата має лежати в навчальному році класу."""
+    boundaries = boundaries_of(journal)
+    semester = semester_for_date(lesson_date, boundaries)  # канікули → JournalError
     year = journal.school_class.school_year
-    first = int(year[:4])
-    expected = first if semester == 1 else first + 1
-    if lesson_date.year != expected:
+    if not boundaries.contains(year, lesson_date):
         raise JournalError(f"Дата не належить навчальному року {year}")
     return semester
 
@@ -253,7 +276,8 @@ def _clean_comment(comment: str | None) -> str | None:
 def _journal_info(j: Journal, lesson_count: int) -> JournalInfo:
     c = j.school_class
     return JournalInfo(
-        j.id, c.id, c.name, c.school_year, j.subject_id, j.subject.name, c.archived, lesson_count
+        j.id, c.id, c.name, c.school_year, j.subject_id, j.subject.name, c.archived, lesson_count,
+        boundaries_of(j),
     )
 
 

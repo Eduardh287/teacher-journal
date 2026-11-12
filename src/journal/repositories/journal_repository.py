@@ -10,7 +10,9 @@ from journal.models import (
     SchoolClass,
     Student,
     Subject,
+    Teacher,
 )
+from journal.services.semesters import SemesterBoundaries
 
 
 class JournalRepository:
@@ -18,6 +20,24 @@ class JournalRepository:
         self.session = session
 
     # --- журнали ---
+
+    def get_teacher(self, teacher_id: int) -> Teacher | None:
+        return self.session.get(Teacher, teacher_id)
+
+    def journals_of_class(self, class_id: int) -> list[Journal]:
+        return list(self.session.scalars(select(Journal).where(Journal.class_id == class_id)))
+
+    def lessons_of_journals(self, journal_ids: list[int]) -> list[Lesson]:
+        """Усі уроки журналів (для перевірки й перерахунку семестрів)."""
+        if not journal_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(Lesson)
+                .where(Lesson.journal_id.in_(journal_ids))
+                .order_by(Lesson.lesson_date, Lesson.id)
+            )
+        )
 
     def journals_for_teacher(self, teacher_id: int, include_archived: bool) -> list[Journal]:
         query = (
@@ -154,3 +174,17 @@ class JournalRepository:
         self.session.execute(delete(Lesson).where(Lesson.journal_id == journal_id))
         self.session.flush()
         self.session.expire_all()
+
+
+def boundaries_of(row: Teacher | Journal) -> SemesterBoundaries:
+    """Межі семестрів з рядка викладача (глобальні) або журналу (знімок)."""
+    return SemesterBoundaries(
+        row.s1_start_month, row.s1_end_month, row.s2_start_month, row.s2_end_month
+    )
+
+
+def set_boundaries(row: Teacher | Journal, boundaries: SemesterBoundaries) -> None:
+    row.s1_start_month = boundaries.s1_start
+    row.s1_end_month = boundaries.s1_end
+    row.s2_start_month = boundaries.s2_start
+    row.s2_end_month = boundaries.s2_end

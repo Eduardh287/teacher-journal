@@ -28,7 +28,9 @@ from journal.services.journal_types import (
     JournalInfo,
     LessonInfo,
     LessonTypeCode,
+    SemesterConflict,
 )
+from journal.services.semesters import MONTHS_UA, SemesterBoundaries, SemesterError
 from journal.ui.widgets import button, field, label
 
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
@@ -310,3 +312,107 @@ class DeleteJournalDialog(_TypedConfirmDialog):
             "Разом з ним буде безповоротно видалено всі уроки, відмітки та оцінки.",
             parent,
         )
+
+
+CONFLICT_LIMIT = 10
+SETTINGS_ONLY_TEXT = "Змінюється в Налаштуваннях"
+
+
+def conflict_text(conflicts: list) -> str:
+    """«Зміну не збережено…» і перелік уроків «9-А · Алгебра — 15.01.2027» (перші 10, далі «і ще N»)."""
+    lines = [
+        f"{c.class_name} · {c.subject_name} — {c.lesson_date:%d.%m.%Y}" for c in conflicts[:CONFLICT_LIMIT]
+    ]
+    if len(conflicts) > CONFLICT_LIMIT:
+        lines.append(f"і ще {len(conflicts) - CONFLICT_LIMIT}")
+    return "Зміну не збережено: ці уроки потрапляють у канікули.\n" + "\n".join(lines)
+
+
+class JournalSettingsDialog(_ApiDialog):
+    """Межі семестрів окремого журналу. Змінюються лише для архівного класу."""
+
+    def __init__(self, teacher_id: int, api_factory: ApiFactory, info: JournalInfo, parent: QWidget | None = None) -> None:
+        super().__init__("Налаштування журналу", teacher_id, api_factory, parent)
+        self.info = info
+        self.result_info: JournalInfo | None = None
+        self.editable = info.class_archived
+        b = info.boundaries
+
+        self.body.addWidget(label(f"{info.class_name} · {info.subject_name} · {info.school_year}", muted=True))
+        self.combos: dict[str, QComboBox] = {}
+        for caption, start_key, end_key, start, end in (
+            ("I семестр", "s1_start", "s1_end", b.s1_start, b.s1_end),
+            ("II семестр", "s2_start", "s2_end", b.s2_start, b.s2_end),
+        ):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.addWidget(label(f"{caption}: з"))
+            row.addWidget(self._month_combo(start_key, start))
+            row.addWidget(label("по"))
+            row.addWidget(self._month_combo(end_key, end))
+            row.addStretch(1)
+            self.body.addLayout(row)
+        self.body.addWidget(label("Інші місяці — канікули", muted=True))
+
+        self.note_label = label(SETTINGS_ONLY_TEXT, muted=True, wrap=True)
+        self.save_button = button("Зберегти", variant="primary")
+        self.save_button.setMinimumHeight(40)
+        self.save_button.setDefault(True)
+        self.save_button.clicked.connect(self._on_save)
+        if self.editable:
+            self.note_label.hide()
+        else:
+            for combo in self.combos.values():
+                combo.setEnabled(False)
+            self.save_button.hide()
+        self.body.addWidget(self.note_label)
+        self.body.addWidget(self.error_label)
+        self.body.addWidget(self.save_button)
+
+    def _month_combo(self, key: str, month: int) -> QComboBox:
+        combo = QComboBox()
+        for number, name in enumerate(MONTHS_UA, start=1):
+            combo.addItem(name, number)
+        combo.setCurrentIndex(month - 1)
+        self.combos[key] = combo
+        return combo
+
+    def selected_boundaries(self) -> SemesterBoundaries:
+        c = self.combos
+        return SemesterBoundaries(
+            c["s1_start"].currentData(), c["s1_end"].currentData(),
+            c["s2_start"].currentData(), c["s2_end"].currentData(),
+        )
+
+    def _revert(self) -> None:
+        b = self.info.boundaries
+        for key, month in (("s1_start", b.s1_start), ("s1_end", b.s1_end), ("s2_start", b.s2_start), ("s2_end", b.s2_end)):
+            self.combos[key].setCurrentIndex(month - 1)
+
+    def _on_save(self) -> None:
+        if not self.editable:
+            return
+        self.error_label.hide()
+        try:
+            boundaries = self.selected_boundaries().validate()
+        except SemesterError as error:
+            self.show_error(str(error))
+            return
+        journal_id = self.info.id
+        self.error_label.hide()
+        try:
+            with self.api_factory() as api:
+                info = api.set_journal_semesters(self.teacher_id, journal_id, boundaries)
+        except SemesterConflict as conflict:
+            self.show_error(conflict_text(conflict.conflicts))
+            self._revert()
+            return
+        except JournalError as error:
+            self.show_error(str(error))
+            return
+        except Exception:
+            logging.exception("Помилка під час зміни меж семестрів журналу")
+            self.show_error(SAVE_ERROR_TEXT)
+            return
+        self.result_info = info
+        self.accept()
