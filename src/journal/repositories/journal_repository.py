@@ -1,5 +1,5 @@
 """Доступ до журналів, уроків і клітинок. Лише запити — без бізнес-правил."""
-from sqlalchemy import exists, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session
 
 from journal.models import (
@@ -147,3 +147,10 @@ class JournalRepository:
     def delete(self, obj) -> None:
         self.session.delete(obj)
         self.session.flush()
+
+    def delete_journal_contents(self, journal_id: int) -> None:
+        """Підсумкові оцінки й уроки журналу (відмітки уроків видаляє БД каскадом)."""
+        self.session.execute(delete(FinalGrade).where(FinalGrade.journal_id == journal_id))
+        self.session.execute(delete(Lesson).where(Lesson.journal_id == journal_id))
+        self.session.flush()
+        self.session.expire_all()
