@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, icon_name)
             self.nav.addItem(item)
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav.currentRowChanged.connect(self._on_nav_changed)
         self.nav.setCurrentRow(0)
         self._icon_refreshers.append(self._refresh_nav_icons)
         layout.addWidget(self.nav, 1)
@@ -144,6 +144,12 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(logout)
         return sidebar
+
+    def _on_nav_changed(self, row: int) -> None:
+        """Перемикає сторінку; журнали оновлюються, бо на сторінці «Класи» могли щось змінити."""
+        self.pages.setCurrentIndex(row)
+        if self.pages.currentWidget() is getattr(self, "journals_page", None):
+            self.journals_page.refresh()
 
     def _refresh_nav_icons(self) -> None:
         for row in range(self.nav.count()):
