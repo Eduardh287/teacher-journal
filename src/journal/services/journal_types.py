@@ -102,7 +102,12 @@ class JournalApi(Protocol):
 
     def create_journal(self, teacher_id: int, class_id: int, subject_id: int) -> JournalInfo: ...
 
-    def delete_journal(self, teacher_id: int, journal_id: int) -> None: ...
+    def delete_journal(
+        self, teacher_id: int, journal_id: int, with_contents: bool = False
+    ) -> None:
+        """Видаляє журнал. З уроками/оцінками — лише якщо with_contents=True
+        (UI передає його тільки після підтвердження словом «видалити»)."""
+        ...
 
     def get_grid(self, teacher_id: int, journal_id: int, semester: int) -> GridData: ...
 

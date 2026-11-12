@@ -119,6 +119,20 @@ QTableWidget::item, QTableView::item { padding: 6px 10px; border-bottom: 1px sol
 QTableWidget::item:selected, QTableView::item:selected { background: $accent_soft; color: $text; }
 QHeaderView { background: transparent; }
 QTableView QTableCornerButton::section { background: $surface; border: none; }
+
+/* Календар (спливає з поля дати). Його внутрішня таблиця — теж QTableView, тому
+   скасовуємо для неї загальні стилі таблиць: рамки, відступи й лінії ламали сітку днів. */
+QCalendarWidget QTableView {
+    background: $surface; border: none; border-radius: 0; gridline-color: transparent;
+    selection-background-color: $accent; selection-color: $accent_text; outline: 0;
+}
+QCalendarWidget QTableView::item { padding: 0; border: none; }
+QCalendarWidget QWidget#qt_calendar_navigationbar { background: $accent; }
+QCalendarWidget QToolButton {
+    color: $accent_text; background: transparent; border: none; padding: 4px 8px; font-weight: 600;
+}
+QCalendarWidget QToolButton:hover { background: $accent_hover; border-radius: 6px; }
+QCalendarWidget QSpinBox { background: $surface; color: $text; border: none; padding: 2px 6px; }
 QHeaderView::section {
     background: $surface; color: $muted; border: none; border-bottom: 1px solid $border;
     padding: 8px 10px; font-weight: 600; font-size: 9pt;
@@ -133,6 +147,7 @@ QPushButton {
     background: $surface; border: 1px solid $border; border-radius: 8px; padding: 8px 16px;
 }
 QPushButton:hover { background: $hover; }
+QPushButton:disabled { color: $muted; background: $bg; border: 1px dashed $border; }
 QPushButton[variant="primary"] { background: $accent; color: $accent_text; border: none; font-weight: 600; }
 QPushButton[variant="primary"]:hover { background: $accent_hover; }
 QPushButton[variant="primary"]:disabled { background: $border; color: $muted; }

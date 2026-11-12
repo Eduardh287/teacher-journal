@@ -70,10 +70,19 @@ class JournalService:
         self.repo.add(journal)
         return _journal_info(journal, 0)
 
-    def delete_journal(self, teacher_id: int, journal_id: int) -> None:
+    def delete_journal(self, teacher_id: int, journal_id: int, with_contents: bool = False) -> None:
+        """Видаляє журнал.
+
+        Порожній журнал видаляється одразу. Журнал з уроками чи оцінками — лише з явним
+        with_contents=True (рішення автора після показу викладачці): тоді в одній транзакції
+        видаляються підсумкові оцінки, уроки (з їхніми відмітками) і сам журнал.
+        Без прапорця сервіс відмовляє — помилка в інтерфейсі не зітре оцінки.
+        """
         journal = self._own_journal(teacher_id, journal_id)
         if self.repo.has_lessons_or_finals(journal_id):
-            raise JournalError("У журналі є уроки чи оцінки — його не можна видалити")
+            if not with_contents:
+                raise JournalError("У журналі є уроки чи оцінки — його не можна видалити")
+            self.repo.delete_journal_contents(journal_id)
         self.repo.delete(journal)
 
     # --- таблиця ---

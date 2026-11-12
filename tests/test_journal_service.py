@@ -2,6 +2,7 @@
 from datetime import date
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy import func, select
 
 from journal.models import Journal, Lesson, LessonEntry, Subject, Teacher
@@ -128,14 +129,18 @@ def test_list_journals_other_teacher_sees_nothing(svc, other, journal):
 
 
 def test_candidates(svc, classes, teacher, session, klass):
-    math, phys = subject_id(session), subject_id(session, "Фізика")
+    # Кандидати — усі пари «клас × предмет» (предмети з довідника, включно з алгеброю й геометрією).
+    from journal.models import Subject
+
+    all_subjects = {s.id for s in session.query(Subject)}
+    math = subject_id(session)
     assert {(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)} == {
-        (klass.id, math), (klass.id, phys)
+        (klass.id, sid) for sid in all_subjects
     }
     svc.create_journal(teacher.id, klass.id, math)
-    assert [(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)] == [
-        (klass.id, phys)
-    ]
+    assert {(c.class_id, c.subject_id) for c in svc.list_journal_candidates(teacher.id)} == {
+        (klass.id, sid) for sid in all_subjects - {math}
+    }
     classes.set_class_archived(teacher.id, klass.id, True)
     assert svc.list_journal_candidates(teacher.id) == []
 
@@ -174,6 +179,26 @@ def test_delete_journal_with_final_grades_refused(svc, session, teacher, journal
     session.flush()
     with pytest.raises(JournalError, match="У журналі є уроки чи оцінки"):
         svc.delete_journal(teacher.id, journal.id)
+
+
+def test_delete_journal_with_contents_removes_everything(svc, session, teacher, journal, lesson, student_ids):
+    """Рішення автора: з підтвердженням журнал видаляється разом з уроками й оцінками."""
+    from journal.models import FinalGrade, FinalGradeKind, Lesson, LessonEntry
+
+    svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 9, "коментар")
+    session.add(FinalGrade(journal_id=journal.id, student_id=student_ids[0],
+                           kind=FinalGradeKind.ANNUAL, grade=9))
+    session.flush()
+    svc.delete_journal(teacher.id, journal.id, with_contents=True)
+    assert session.get(Journal, journal.id) is None
+    assert session.get(Lesson, lesson.id) is None
+    assert session.scalars(select(LessonEntry).where(LessonEntry.lesson_id == lesson.id)).all() == []
+    assert session.scalars(select(FinalGrade).where(FinalGrade.journal_id == journal.id)).all() == []
+
+
+def test_delete_journal_with_contents_still_checks_owner(svc, other, journal, lesson):
+    with pytest.raises(JournalNotFound):
+        svc.delete_journal(other.id, journal.id, with_contents=True)
 
 
 # ---------- власність ----------
