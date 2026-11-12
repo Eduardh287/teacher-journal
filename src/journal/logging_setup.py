@@ -23,7 +23,8 @@ _original_excepthook = None
 
 # PostgreSQL додає до помилок рядок «DETAIL: Failing row contains (...)» з даними рядка —
 # там можуть бути імена учнів чи хеш пароля. Такі рядки в журнал не потрапляють.
-_DETAIL_LINE = re.compile(r"^\s*DETAIL:.*$", re.MULTILINE)
+# Префікс залежить від мови сервера (lc_messages): англійська, українська, російська.
+_DETAIL_LINE = re.compile(r"^\s*(?:DETAIL|ПОДРОБИЦІ|ДЕТАЛІ|ПОДРОБНОСТИ):.*$", re.MULTILINE)
 REDACTED = "DETAIL: [приховано]"
 
 
@@ -116,6 +117,8 @@ def install_excepthook() -> None:
 
     # Винятки у фонових потоках (з'являться, наприклад, для резервних копій) теж у журнал.
     def _thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
         if not issubclass(args.exc_type, KeyboardInterrupt):
             logging.critical(
                 "Необроблений виняток у потоці %s",

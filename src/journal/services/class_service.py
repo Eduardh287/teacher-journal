@@ -27,7 +27,7 @@ _YEAR_RE = re.compile(r"^(\d{4})-(\d{4})$")
 _LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*(?:[.)]\s*|\s+)")
 _APOSTROPHES = str.maketrans({"’": "'", "ʼ": "'", "`": "'"})
 # Невидимі символи, які трапляються в тексті з PDF/Word/macOS: zero-width, BOM, м'який перенос.
-_INVISIBLE = str.maketrans({c: None for c in "​‌‍⁠﻿­"})
+_INVISIBLE = str.maketrans({c: None for c in "\u200b\u200c\u200d\u2060\ufeff\u00ad"})
 
 RemovalMode = Literal["delete", "archive"]
 
@@ -272,7 +272,7 @@ class ClassService:
     def _own_student(self, teacher_id: int, student_id: int, editable: bool = False) -> Student:
         student = self.repo.get_student(student_id)
         if student is None:
-            raise ClassError("Учня не знайдено")
+            raise ClassNotFound("Учня не знайдено")
         try:
             self._own_class(teacher_id, student.class_id, editable=editable)
         except ClassNotFound:
