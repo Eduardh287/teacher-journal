@@ -28,6 +28,16 @@ TOKENS: dict[str, dict[str, str]] = {
         "accent_text": "#FFFFFF",
         "danger": "#D92D20",
         "danger_soft": "#FEF3F2",
+        # Позначки в таблиці журналу (етап 5)
+        "mark_absent": "#D92D20",
+        "mark_absent_soft": "#FEE4E2",
+        "mark_sick": "#B54708",
+        "mark_sick_soft": "#FEF0C7",
+        "mark_late": "#175CD3",
+        "mark_late_soft": "#D1E9FF",
+        "lesson_test_soft": "#F4EBFF",
+        "lesson_lab_soft": "#DCFAE6",
+        "lesson_independent_soft": "#FEF6EE",
     },
     "dark": {
         "bg": "#0F1117",
@@ -43,6 +53,15 @@ TOKENS: dict[str, dict[str, str]] = {
         "accent_text": "#0F1117",
         "danger": "#F97066",
         "danger_soft": "#2A1715",
+        "mark_absent": "#F97066",
+        "mark_absent_soft": "#3A1A18",
+        "mark_sick": "#FDB022",
+        "mark_sick_soft": "#3A2A10",
+        "mark_late": "#84CAFF",
+        "mark_late_soft": "#132A45",
+        "lesson_test_soft": "#2E2350",
+        "lesson_lab_soft": "#123222",
+        "lesson_independent_soft": "#3A2814",
     },
 }
 
@@ -92,12 +111,12 @@ QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid $acce
 QCheckBox { spacing: 8px; }
 
 /* Таблиця учнів */
-QTableWidget {
+QTableWidget, QTableView {
     background: $surface; border: 1px solid $border; border-radius: 12px;
     gridline-color: $border; outline: 0; selection-background-color: $accent_soft; selection-color: $text;
 }
-QTableWidget::item { padding: 6px 10px; border-bottom: 1px solid $border; }
-QTableWidget::item:selected { background: $accent_soft; color: $text; }
+QTableWidget::item, QTableView::item { padding: 6px 10px; border-bottom: 1px solid $border; }
+QTableWidget::item:selected, QTableView::item:selected { background: $accent_soft; color: $text; }
 QHeaderView { background: transparent; }
 QHeaderView::section {
     background: $surface; color: $muted; border: none; border-bottom: 1px solid $border;
