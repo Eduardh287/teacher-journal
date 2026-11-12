@@ -34,6 +34,9 @@ class ClassRepository:
         )
         return {class_id: count for class_id, count in rows}
 
+    def journals_of_class(self, class_id: int) -> list[Journal]:
+        return list(self.session.scalars(select(Journal).where(Journal.class_id == class_id)))
+
     def has_journals(self, class_id: int) -> bool:
         return bool(self.session.scalar(select(exists().where(Journal.class_id == class_id))))
 

@@ -213,6 +213,10 @@ class ClassesPage(QWidget):
         holder_layout.addStretch(1)
         return holder
 
+    def refresh(self) -> None:
+        """Оновлює сторінку ззовні (напр., після переходу на новий навчальний рік)."""
+        self.show_list()
+
     def show_list(self) -> None:
         """Перемикає на список і заново будує картки (порядок — як віддає сервіс)."""
         self._current_class = None

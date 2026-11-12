@@ -43,7 +43,7 @@ class SemesterBoundaries:
         if not off(self.s1_end) < off(self.s2_start) <= off(self.s2_end):
             raise SemesterError("Семестри не можуть перетинатися; I семестр має передувати II")
         # Перехід на новий рік — з 1 серпня (рішення автора), тож рік має вкладатися між серпнями.
-        if self.s1_start < ROLLOVER_MONTH or self.s2_end >= ROLLOVER_MONTH or self.s2_start >= ROLLOVER_MONTH:
+        if self.s1_start < ROLLOVER_MONTH or self.s2_end >= ROLLOVER_MONTH:
             raise SemesterError(
                 "I семестр має починатися з серпня або пізніше, а II — закінчуватися до серпня"
             )

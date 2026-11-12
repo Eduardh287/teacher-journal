@@ -35,3 +35,10 @@ Rows/numbers 1..n incl. same-date order by id; text for all four types with/with
 
 ## Done
 Full `pytest` green; no colour literals; light and dark offscreen screenshots; Fable `APPROVE`.
+
+## D. What PR #10 actually merged (status note, 2026-11-12)
+- **Subjects:** migration `8e3ed2046fb3` adds «Алгебра» and «Геометрія» (idempotent `INSERT ... ON CONFLICT DO NOTHING`; downgrade removes them only when no journal uses them). «Математика» stays.
+- **Settings «Предмети» card:** in the Settings page the teacher can add subjects (no rename/delete, so existing journals are never broken). Moved to `ui/settings_cards.py` in stage 5.2.
+- **Sidebar:** the subtitle under the app name was removed.
+- **Journal deletion with contents:** `delete_journal(..., with_contents=True)` removes final grades, lessons (with marks) and the journal in one transaction; without the flag the service refuses. UI asks to type «видалити». Since stage 5.2 deletion of a journal of an archived class is refused.
+- **Lesson log panel** (section A) and folded-in review notes (section C) are merged as specified.

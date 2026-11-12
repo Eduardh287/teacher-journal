@@ -1,5 +1,4 @@
 """Головне вікно: бічна панель з навігацією зліва, сторінки справа."""
-import logging
 from collections.abc import Callable
 
 from PySide6.QtCore import QSize, Qt
@@ -10,7 +9,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -19,12 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.db import session_scope
 from journal.services.auth_service import CurrentUser
-from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError, SubjectService
 from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
 from journal.ui.journals_page import JournalsPage
+from journal.ui.settings_cards import SemestersCard, SubjectsCard
 from journal.ui.widgets import brand_mark, button, card, label
 
 # (іконка, підпис у меню)
@@ -207,7 +204,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_settings_page(self) -> QWidget:
-        page, layout = self._page("Налаштування", "Вигляд застосунку та довідник предметів.")
+        page, layout = self._page("Налаштування", "Вигляд застосунку, семестри та довідник предметів.")
 
         frame, card_layout = card()
         card_layout.addWidget(label("Оформлення", object_name="CardTitle"))
@@ -238,70 +235,15 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(frame)
         layout.addSpacing(16)
-        layout.addWidget(self._build_subjects_card())
+        self.semesters_card = SemestersCard(
+            self.current_user.id, on_saved=lambda: self.journals_page.refresh()
+        )
+        layout.addWidget(self.semesters_card)
+        layout.addSpacing(16)
+        self.subjects_card = SubjectsCard(on_changed=lambda: self.journals_page.refresh())
+        layout.addWidget(self.subjects_card)
         layout.addStretch(1)
         return page
-
-    # ---------- Предмети ----------
-
-    def _build_subjects_card(self) -> QFrame:
-        """Картка «Предмети»: список і додавання власного предмета (рішення автора)."""
-        frame, card_layout = card()
-        card_layout.addWidget(label("Предмети", object_name="CardTitle"))
-        card_layout.addWidget(
-            label("Предмети, для яких можна створювати журнали. Додайте свій, якщо його немає.", muted=True)
-        )
-        self.subjects_label = label("", wrap=True)
-        card_layout.addWidget(self.subjects_label)
-
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.subject_edit = QLineEdit()
-        self.subject_edit.setPlaceholderText("Назва предмета, напр. Астрономія")
-        self.subject_edit.setMaxLength(MAX_SUBJECT_NAME)
-        self.subject_edit.returnPressed.connect(self._on_add_subject)
-        add = button("Додати", variant="primary")
-        add.clicked.connect(self._on_add_subject)
-        row.addWidget(self.subject_edit, 1)
-        row.addWidget(add)
-        card_layout.addLayout(row)
-
-        self.subject_error = QLabel()
-        self.subject_error.setProperty("error", True)
-        self.subject_error.setWordWrap(True)
-        self.subject_error.hide()
-        card_layout.addWidget(self.subject_error)
-        self._load_subjects()
-        return frame
-
-    def _load_subjects(self) -> None:
-        try:
-            with session_scope() as session:
-                subjects = SubjectService(session).list_subjects()
-        except Exception:
-            logging.exception("Не вдалося завантажити предмети")
-            self.subjects_label.setText("Не вдалося завантажити список предметів")
-            return
-        self.subjects_label.setText(" · ".join(s.name for s in subjects))
-
-    def _on_add_subject(self) -> None:
-        name = self.subject_edit.text()
-        try:
-            with session_scope() as session:
-                SubjectService(session).add_subject(name)
-        except SubjectError as error:
-            self.subject_error.setText(str(error))
-            self.subject_error.show()
-            return
-        except Exception:
-            logging.exception("Не вдалося додати предмет")
-            self.subject_error.setText("Не вдалося зберегти зміни")
-            self.subject_error.show()
-            return
-        self.subject_error.hide()
-        self.subject_edit.clear()
-        self._load_subjects()
-        self.journals_page.refresh()  # новий предмет одразу доступний у «Новий журнал»
 
     # ---------- Тема ----------
 
