@@ -2,6 +2,7 @@
 import logging
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from journal.config import ConfigError
@@ -10,6 +11,7 @@ from journal.logging_setup import install_excepthook, setup_logging
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
 from journal.ui.main_window import MainWindow
+from journal.ui.rollover_dialog import maybe_run_rollover
 from journal.ui.theme import apply_theme, load_theme_name
 
 
@@ -44,6 +46,8 @@ def main() -> None:
 
     window = MainWindow(dialog.current_user)
     window.show()
+    teacher_id = dialog.current_user.id
+    QTimer.singleShot(0, lambda: maybe_run_rollover(window, teacher_id))
     sys.exit(app.exec())
 
 

@@ -38,7 +38,7 @@ def make_page(qtbot, monkeypatch):
     """Фабрика: відкриває сторінку журналів на заданому фейку (семестр за замовчуванням — I)."""
 
     def factory(service: FakeJournalService) -> JournalsPage:
-        monkeypatch.setattr(journals_page, "semester_for_date", lambda d: 1)
+        monkeypatch.setattr(journals_page, "semester_for_date", lambda d, boundaries=None: 1)
         page = JournalsPage(CurrentUser(1, "teacher", "Викладач"), api_factory=lambda: nullcontext(service))
         qtbot.addWidget(page)
         page.resize(1100, 700)

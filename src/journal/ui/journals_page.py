@@ -42,7 +42,7 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.ui import icons, theme
-from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, LessonDialog, NewJournalDialog
+from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
 from journal.ui.widgets import button, card, label
@@ -320,6 +320,8 @@ class JournalsPage(QWidget):
         bar.addWidget(self.new_lesson_btn)
         self.menu_btn = button("Ще")
         menu = QMenu(self.menu_btn)
+        self.settings_action = menu.addAction("Налаштування журналу")
+        self.settings_action.triggered.connect(self._on_journal_settings)
         self.delete_journal_action = menu.addAction("Видалити журнал")
         self.delete_journal_action.triggered.connect(self._on_delete_journal)
         self.menu_btn.setMenu(menu)
@@ -383,9 +385,14 @@ class JournalsPage(QWidget):
         return holder
 
     def open_journal(self, journal_id: int) -> None:
-        """Відкриває журнал на семестрі за сьогоднішньою датою (канікули — 1 семестр)."""
+        """Відкриває журнал на семестрі за сьогоднішньою датою і межами журналу (канікули — 1 семестр)."""
+        ok, journals = self._call(lambda api: api.list_journals(self.teacher_id, True))
+        info = next((j for j in journals if j.id == journal_id), None) if ok else None
+        if info is None:
+            self.show_list()
+            return
         try:
-            semester = semester_for_date(date.today())
+            semester = semester_for_date(date.today(), info.boundaries)
         except JournalError:
             semester = 1
         self._journal_id = journal_id
@@ -416,21 +423,21 @@ class JournalsPage(QWidget):
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
-        self.lesson_panel.set_lessons(grid.lessons, grid.journal.class_archived)
+        self.lesson_panel.set_lessons(grid.lessons, False)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
-        self.subtitle_label.setText(info.school_year + (" · клас в архіві, лише перегляд" if info.class_archived else ""))
+        self.subtitle_label.setText(info.school_year + (" · клас в архіві" if info.class_archived else ""))
         self.semester_buttons[grid.semester].setChecked(True)
-        for widget in (self.new_lesson_btn, self.menu_btn):
-            widget.setVisible(not info.class_archived)
-        self.new_lesson_shortcut.setEnabled(not info.class_archived)
+        self.new_lesson_btn.setVisible(True)
+        self.new_lesson_shortcut.setEnabled(True)
+        self.delete_journal_action.setEnabled(not info.class_archived)
 
         if not grid.students:
             self.empty_label.setText("У класі немає учнів")
             self.empty_lesson_btn.hide()
         elif not grid.lessons:
             self.empty_label.setText("Уроків у цьому семестрі ще немає")
-            self.empty_lesson_btn.setVisible(not info.class_archived)
+            self.empty_lesson_btn.setVisible(True)
         self.content_stack.setCurrentIndex(0 if grid.students and grid.lessons else 1)
         if select_lesson_id is not None:
             column = self.grid_view.grid_model.column_of(select_lesson_id)
@@ -512,7 +519,7 @@ class JournalsPage(QWidget):
 
     def new_lesson_today(self) -> None:
         """Ctrl+N: звичайний урок на сьогодні без діалогу."""
-        if self._grid is None or self._grid.journal.class_archived:
+        if self._grid is None:
             return
         journal_id = self._journal_id
         ok, lesson = self._call(
@@ -556,9 +563,18 @@ class JournalsPage(QWidget):
         if ok:
             self.reload_grid()
 
+    def _on_journal_settings(self) -> None:
+        """«Налаштування журналу»: межі семестрів (змінюються лише для архівного класу)."""
+        if self._grid is None:
+            return
+        self.grid_view.flush_pending()
+        dialog = JournalSettingsDialog(self.teacher_id, self._api_factory, self._grid.journal, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.reload_grid()
+
     def _on_delete_journal(self) -> None:
         """«Видалити журнал»: порожній — звичайне підтвердження, з уроками — введення слова «видалити»."""
-        if self._grid is None:
+        if self._grid is None or self._grid.journal.class_archived:
             return
         self.grid_view.flush_pending()
         info = self._grid.journal

@@ -180,20 +180,20 @@ def test_semester_switch_replaces_rows(page, fake):
     assert page.lesson_panel.selected_lesson_id() == page.grid_view.grid_model.lessons[0].id
 
 
-def test_archived_class_panel_is_view_only(make_page, qtbot):
+def test_archived_class_panel_is_editable(make_page, qtbot):
+    """В архівному журналі панель дозволяє редагувати урок (рішення автора)."""
     service = FakeJournalService(["Коваленко Олена"], class_archived=True)
     service.add_lesson(date(2025, 9, 2), "regular", "Дроби")
     page = make_page(service)
     panel = page.lesson_panel
     assert panel.isVisible() and len(rows(page)) == 1
+    # Від'єднуємо сторінку, щоб не відкрився справжній модальний діалог, і ловимо сигнал самі.
+    panel.lesson_edit_requested.disconnect()
     emitted = []
     panel.lesson_edit_requested.connect(emitted.append)
-    panel.lesson_delete_requested.connect(emitted.append)
     panel.table.cellDoubleClicked.emit(0, 2)
-    pos = panel.table.visualItemRect(panel.table.item(0, 2)).center()
-    panel._on_menu(pos)  # у режимі перегляду меню не відкривається (інакше тест завис би)
-    assert emitted == []
-    click_row(page, 0)  # виділення працює
+    assert emitted == [page.grid_view.grid_model.lessons[0].id]
+    click_row(page, 0)
     assert panel.selected_lesson_id() == page.grid_view.grid_model.lessons[0].id
 
 

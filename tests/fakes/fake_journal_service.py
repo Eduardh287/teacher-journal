@@ -13,13 +13,16 @@ from journal.services.journal_types import (
     JournalError,
     JournalInfo,
     JournalNotFound,
+    LessonConflict,
     LessonInfo,
     LessonNotFound,
     LessonTypeCode,
+    SemesterConflict,
     semester_for_date,
 )
+from journal.services.semesters import SemesterBoundaries
 
-ARCHIVED_CLASS_TEXT = "Клас в архіві — журнал лише для перегляду"
+ARCHIVED_CLASS_TEXT = "Клас в архіві — журнал не можна видалити; спершу поверніть клас"
 
 
 class FakeJournalService:
@@ -78,7 +81,8 @@ class FakeJournalService:
 
     def _info(self, row: dict) -> LessonInfo:
         count = sum(1 for (_, lid) in self.cells if lid == row["id"])
-        return LessonInfo(row["id"], row["date"], semester_for_date(row["date"]), row["type"], row["topic"], count)
+        semester = semester_for_date(row["date"], self.journal.boundaries)
+        return LessonInfo(row["id"], row["date"], semester, row["type"], row["topic"], count)
 
     def _lesson(self, lesson_id: int) -> dict:
         for row in self.lessons:
@@ -87,8 +91,7 @@ class FakeJournalService:
         raise LessonNotFound("Урок не знайдено")
 
     def _check_writable(self) -> None:
-        if self.journal.class_archived:
-            raise JournalError(ARCHIVED_CLASS_TEXT)
+        """Архівний журнал теж редагується (рішення автора 12.11.2026)."""
 
     # --- JournalApi ---
 
@@ -117,6 +120,8 @@ class FakeJournalService:
 
     def delete_journal(self, teacher_id: int, journal_id: int, with_contents: bool = False) -> None:
         self._enter("delete_journal", journal_id, with_contents)
+        if self.journal.class_archived:
+            raise JournalError(ARCHIVED_CLASS_TEXT)
         if all(j.id != journal_id for j in self.journals):
             raise JournalNotFound("Журнал не знайдено")
         if self.lessons and not with_contents:
@@ -124,6 +129,30 @@ class FakeJournalService:
         self.lessons.clear()
         self.cells.clear()
         self.journals = [j for j in self.journals if j.id != journal_id]
+
+    def set_journal_semesters(self, teacher_id: int, journal_id: int, boundaries: SemesterBoundaries) -> JournalInfo:
+        self._enter("set_journal_semesters", journal_id, boundaries)
+        if self.journal.id != journal_id:
+            raise JournalNotFound("Журнал не знайдено")
+        if not self.journal.class_archived:
+            raise JournalError("Межі семестрів журналу в роботі змінюються в Налаштуваннях")
+        boundaries.validate()
+        conflicts = sorted(
+            (
+                LessonConflict(
+                    self.journal.id, self.journal.class_name, self.journal.school_year,
+                    self.journal.subject_name, row["date"],
+                )
+                for row in self.lessons
+                if not boundaries.contains(self.journal.school_year, row["date"])
+            ),
+            key=lambda c: c.lesson_date,
+        )
+        if conflicts:
+            raise SemesterConflict(conflicts)
+        self.journal = replace(self.journal, boundaries=boundaries)
+        self.journals = [self.journal if j.id == journal_id else j for j in self.journals]
+        return self.journal
 
     def get_grid(self, teacher_id: int, journal_id: int, semester: int) -> GridData:
         self._enter("get_grid", journal_id, semester)
@@ -139,9 +168,9 @@ class FakeJournalService:
         return GridData(info, semester, list(self.students), lessons, cells)
 
     def _check_date(self, lesson_date: date) -> None:
-        semester_for_date(lesson_date)
-        start = int(self.journal.school_year[:4])
-        if not date(start, 9, 1) <= lesson_date <= date(start + 1, 6, 30):
+        boundaries = self.journal.boundaries
+        semester_for_date(lesson_date, boundaries)
+        if not boundaries.contains(self.journal.school_year, lesson_date):
             raise JournalError(f"Дата не належить навчальному року {self.journal.school_year}")
 
     @staticmethod

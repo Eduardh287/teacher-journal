@@ -44,11 +44,22 @@ class Journal(TimestampMixin, Base):
     """Журнал = клас + предмет на навчальний рік. Семестр визначається уроком."""
 
     __tablename__ = "journals"
-    __table_args__ = (UniqueConstraint("class_id", "subject_id"),)
+    __table_args__ = (
+        UniqueConstraint("class_id", "subject_id"),
+        *(
+            CheckConstraint(f"{c} BETWEEN 1 AND 12", name=c)
+            for c in ("s1_start_month", "s1_end_month", "s2_start_month", "s2_end_month")
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="RESTRICT"), index=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="RESTRICT"))
+    # Знімок меж семестрів: для класів у роботі дорівнює глобальним з Налаштувань, в архіві — заморожений.
+    s1_start_month: Mapped[int] = mapped_column(SmallInteger, default=9, server_default="9")
+    s1_end_month: Mapped[int] = mapped_column(SmallInteger, default=12, server_default="12")
+    s2_start_month: Mapped[int] = mapped_column(SmallInteger, default=1, server_default="1")
+    s2_end_month: Mapped[int] = mapped_column(SmallInteger, default=6, server_default="6")
 
     school_class: Mapped["SchoolClass"] = relationship(back_populates="journals")  # noqa: F821
     subject: Mapped[Subject] = relationship()
