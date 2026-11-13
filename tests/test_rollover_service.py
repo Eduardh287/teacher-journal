@@ -259,3 +259,30 @@ def test_skipped_year_class_already_exists_is_not_duplicated(roll, classes, teac
     roll.apply(teacher.id, date(2026, 11, 13))  # не падає на унікальності
     names = sorted((c.name, c.school_year) for c in classes.list_classes(teacher.id, include_archived=True))
     assert names == [("10-А", "2025-2026"), ("11-А", "2026-2027"), ("9-А", "2024-2025")]
+
+
+def test_two_old_classes_to_same_target_newest_roster_wins(session):
+    """9-А (2024-2025) і 10-А (2025-2026) обидва ведуть до 11-А (2026-2027): учнів бере новіший клас."""
+    from datetime import date
+
+    from journal.models import Teacher
+    from journal.services.class_service import ClassService
+    from journal.services.rollover_service import RolloverService
+
+    teacher = Teacher(username="pytest_rnewest", password_hash="x", full_name="Т")
+    session.add(teacher)
+    session.flush()
+    cs = ClassService(session)
+    old = cs.create_class(teacher.id, "9-А", "2024-2025")
+    cs.import_students(teacher.id, old.id, "Старенко Андрій")
+    newer = cs.create_class(teacher.id, "10-А", "2025-2026")
+    cs.import_students(teacher.id, newer.id, "Новенко Ірина\nНовенко Олег")
+    plan = RolloverService(session).plan(teacher.id, date(2026, 8, 1))
+    by_class = {item.class_name: item for item in plan}
+    assert by_class["10-А"].target_exists is False
+    assert by_class["9-А"].target_exists is True
+    RolloverService(session).apply(teacher.id, date(2026, 8, 1))
+    target = [c for c in cs.list_classes(teacher.id) if c.name == "11-А" and c.school_year == "2026-2027"]
+    assert len(target) == 1
+    names = [s.full_name for s in cs.list_students(teacher.id, target[0].id)]
+    assert names == ["Новенко Ірина", "Новенко Олег"]

@@ -459,3 +459,35 @@ def test_set_cell_unknown_attendance(svc, teacher, lesson, student_ids):
     with pytest.raises(JournalError):
         svc.set_cell(teacher.id, lesson.id, student_ids[0], "maybe", None, None)  # type: ignore[arg-type]
 
+
+
+def test_delete_lesson_refusal_explains_withdrawn_student(svc, classes, teacher, klass, lesson, student_ids):
+    """Оцінки вибулого учня очистити не можна — відмова пояснює, як діяти (рецензія Fable, етап 6)."""
+    svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 7, None)
+    classes.set_student_archived(teacher.id, student_ids[0], True)
+    name = next(s.full_name for s in classes.list_students(teacher.id, klass.id) if s.id == student_ids[0])
+    with pytest.raises(JournalError) as error:
+        svc.delete_lesson(teacher.id, lesson.id)
+    text = str(error.value)
+    assert text.startswith("Урок має оцінки чи позначки (1)")
+    assert name in text and "поверніть учня до списку класу" in text
+
+
+def test_delete_lesson_refusal_without_withdrawn_has_no_hint(svc, teacher, lesson, student_ids):
+    svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 7, None)
+    with pytest.raises(JournalError) as error:
+        svc.delete_lesson(teacher.id, lesson.id)
+    assert "вибулим" not in str(error.value)
+
+
+def test_delete_notebook_refusal_explains_withdrawn_student(svc, classes, teacher, klass, journal, lesson, student_ids):
+    """Те саме пояснення для «Зошита» з оцінкою вибулого учня."""
+    column = svc.create_column(teacher.id, journal.id, "notebook", lesson.id)
+    svc.set_override(teacher.id, journal.id, student_ids[0], ("notebook", column.id), 11)
+    classes.set_student_archived(teacher.id, student_ids[0], True)
+    name = next(s.full_name for s in classes.list_students(teacher.id, klass.id) if s.id == student_ids[0])
+    with pytest.raises(JournalError) as error:
+        svc.delete_column(teacher.id, column.id)
+    text = str(error.value)
+    assert text.startswith("У стовпчику «Зошит» є оцінки (1)")
+    assert name in text and "поверніть учня до списку класу" in text
