@@ -139,6 +139,24 @@ class JournalRepository:
             select(func.count()).select_from(LessonEntry).where(LessonEntry.lesson_id == lesson_id)
         )
 
+    def withdrawn_with_entries(self, lesson_id: int) -> list[str]:
+        """Імена вибулих учнів, що мають відмітки в цьому уроці (для пояснення відмови)."""
+        return list(self.session.scalars(
+            select(Student.full_name)
+            .join(LessonEntry, LessonEntry.student_id == Student.id)
+            .where(LessonEntry.lesson_id == lesson_id, Student.archived.is_(True))
+            .order_by(Student.full_name)
+        ))
+
+    def withdrawn_with_extra_grades(self, column_id: int) -> list[str]:
+        """Імена вибулих учнів з оцінками в стовпчику «Зошит»/«Тематична»."""
+        return list(self.session.scalars(
+            select(Student.full_name)
+            .join(ExtraGrade, ExtraGrade.student_id == Student.id)
+            .where(ExtraGrade.column_id == column_id, Student.archived.is_(True))
+            .order_by(Student.full_name)
+        ))
+
     def get_entry(self, lesson_id: int, student_id: int) -> LessonEntry | None:
         return self.session.get(LessonEntry, (lesson_id, student_id))
 

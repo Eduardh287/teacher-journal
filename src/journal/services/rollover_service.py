@@ -54,7 +54,10 @@ class RolloverService:
         all_classes = self.classes.classes_for_teacher(teacher_id, include_archived=True)
         taken = {(c.name.casefold(), c.school_year) for c in all_classes}
         due = [c for c in all_classes if not c.archived and rollover_due(c.school_year, today)]
-        due.sort(key=lambda c: (c.school_year, class_name_key(c.name)))
+        # Новіші роки першими: якщо два старі класи ведуть до одного нового,
+        # учнів бере новіший клас (рецензія Fable); старший лише архівується.
+        due.sort(key=lambda c: class_name_key(c.name))
+        due.sort(key=lambda c: c.school_year, reverse=True)
         counts = self.classes.active_student_counts([c.id for c in due])
         return [self._item(c, taken, counts.get(c.id, 0), today) for c in due]
 
