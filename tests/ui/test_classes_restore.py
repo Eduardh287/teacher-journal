@@ -44,4 +44,9 @@ def test_restore_conflict_shows_lessons_not_generic_error(qtbot, monkeypatch):
     title, text = shown[0]
     assert title == "Клас не повернуто з архіву"
     assert "9-А · Алгебра — 15.06.2027" in text
-    assert "Налаштування журналу" in text
+    assert text.endswith(
+        "\n\nПісля повернення клас отримує загальні межі семестрів. Змініть їх у «Налаштування» → "
+        "«Семестри» або перенесіть чи видаліть ці уроки в журналі (журнал архівного класу можна "
+        "редагувати), а тоді поверніть клас ще раз."
+    )
+    assert "Налаштування журналу" not in text

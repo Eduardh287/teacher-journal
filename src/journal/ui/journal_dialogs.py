@@ -5,7 +5,8 @@ from contextlib import AbstractContextManager
 from datetime import date
 from typing import Any
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QColor, QTextCharFormat
 from PySide6.QtWidgets import (
     QComboBox,
     QCalendarWidget,
@@ -31,6 +32,7 @@ from journal.services.journal_types import (
     SemesterConflict,
 )
 from journal.services.semesters import MONTHS_UA, SemesterBoundaries, SemesterError
+from journal.ui import theme
 from journal.ui.widgets import button, field, label
 
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
@@ -124,6 +126,9 @@ class NewJournalDialog(_ApiDialog):
             self.body.addWidget(self.hint_label)
             self.body.addWidget(self.error_label)
             self.submit_button.setEnabled(False)
+            close_button = button("Закрити")
+            close_button.clicked.connect(self.reject)
+            self.body.addWidget(close_button)
 
     def _fill_subjects(self) -> None:
         class_id = self.class_combo.currentData()
@@ -166,6 +171,10 @@ class LessonDialog(_ApiDialog):
         self.date_edit.calendarWidget().setVerticalHeaderFormat(
             QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
         )
+        weekend = QTextCharFormat()
+        weekend.setForeground(QColor(theme.color("danger")))
+        for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+            self.date_edit.calendarWidget().setWeekdayTextFormat(day, weekend)
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         start = lesson.lesson_date if lesson else date.today()
         self.date_edit.setDate(QDate(start.year, start.month, start.day))
@@ -227,6 +236,7 @@ class CommentDialog(QDialog):
         layout.addWidget(label("Коментар до клітинки", object_name="EmptyTitle"))
         self.edit = QPlainTextEdit()
         self.edit.setMinimumHeight(140)
+        self.edit.setTabChangesFocus(True)
         self.edit.setPlainText(text)
         self.edit.textChanged.connect(self._limit)
         layout.addWidget(self.edit)

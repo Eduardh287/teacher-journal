@@ -168,8 +168,10 @@ class JournalGridModel(QAbstractTableModel):
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         if role == Qt.ItemDataRole.ForegroundRole and student.archived:
             return QColor(theme.color("muted"))
-        if role == Qt.ItemDataRole.ToolTipRole and student.archived:
-            return "Учень вибув — лише перегляд"
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if student.archived:
+                return f"{student.full_name}\nУчень вибув — лише перегляд"
+            return student.full_name
         return None
 
 
@@ -296,6 +298,7 @@ class JournalGridView(QTableView):
         vheader.setFixedWidth(NAME_WIDTH)
         vheader.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         vheader.setHighlightSections(False)
+        vheader.setTextElideMode(Qt.TextElideMode.ElideRight)
 
         self.setItemDelegate(JournalCellDelegate(self))
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

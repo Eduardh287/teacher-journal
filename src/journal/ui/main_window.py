@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -206,6 +207,13 @@ class MainWindow(QMainWindow):
     def _build_settings_page(self) -> QWidget:
         page, layout = self._page("Налаштування", "Вигляд застосунку, семестри та довідник предметів.")
 
+        # Заголовок і підзаголовок нерухомі; три картки прокручуються, щоб помилки
+        # й списки конфліктів не стискали поля.
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(16)
+
         frame, card_layout = card()
         card_layout.addWidget(label("Оформлення", object_name="CardTitle"))
         card_layout.addWidget(label("Тема зберігається між запусками.", muted=True))
@@ -233,16 +241,21 @@ class MainWindow(QMainWindow):
         self.theme_group.buttonClicked.connect(self._on_theme_clicked)
         card_layout.addLayout(row)
 
-        layout.addWidget(frame)
-        layout.addSpacing(16)
+        body_layout.addWidget(frame)
         self.semesters_card = SemestersCard(
             self.current_user.id, on_saved=lambda: self.journals_page.refresh()
         )
-        layout.addWidget(self.semesters_card)
-        layout.addSpacing(16)
+        body_layout.addWidget(self.semesters_card)
         self.subjects_card = SubjectsCard(on_changed=lambda: self.journals_page.refresh())
-        layout.addWidget(self.subjects_card)
-        layout.addStretch(1)
+        body_layout.addWidget(self.subjects_card)
+        body_layout.addStretch(1)
+
+        self.settings_scroll = QScrollArea()
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.settings_scroll.setWidget(body)
+        layout.addWidget(self.settings_scroll, 1)
         return page
 
     # ---------- Тема ----------
