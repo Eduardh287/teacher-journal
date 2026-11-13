@@ -1,6 +1,6 @@
 """Наскрізні сценарії S1–S10 (docs/specs/qa-plan.md, агент B): справжні сторінки, діалоги й сервіси на journal_test.
 
-Імена учнів вигадані. Сценарій, що виявив справжню помилку, лишається xfail(strict=True) з номером знахідки QA-Bn.
+Імена учнів вигадані. Знахідки QA-B1..B3 виправлено в `fix/qa-findings`, їхні сценарії тепер звичайні тести.
 """
 from datetime import date
 
@@ -689,7 +689,7 @@ def test_s4_archived_class_and_restore(window, teacher, session, drive, qtbot, m
     assert (kind, title) == ("warning", "Клас не повернуто з архіву")
     assert text.startswith("Зміну не збережено: ці уроки потрапляють у канікули.\n")
     assert "9-А · Алгебра — 10.11.2026" in text and "9-А · Алгебра — 08.12.2026" in text
-    assert "Налаштування журналу" in text
+    assert "«Налаштування» → «Семестри»" in text and "Налаштування журналу" not in text
     assert not classes.restore_class_btn.isHidden(), "клас лишився в архіві"
     assert [c.archived for c in ClassService(session).list_classes(tid, True) if c.id == c9.id] == [True]
     assert [semester_of(session, x.id) for x in (nov, dec)] == [1, 1]
@@ -697,43 +697,39 @@ def test_s4_archived_class_and_restore(window, teacher, session, drive, qtbot, m
 
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B1: повідомлення про конфлікт при поверненні класу радить змінити межі журналу в "
-    "«Налаштуваннях журналу», але повернення завжди застосовує ЗАГАЛЬНІ межі з Налаштувань — "
-    "порада не допомагає, викладачка не може повернути клас",
-)
-def test_s4_restore_conflict_hint_works(window, teacher, session, drive, msgs):
+@pytest.mark.parametrize("recovery", ["settings", "move_lesson"])
+def test_s4_restore_conflict_hint_works(recovery, window, teacher, session, drive, msgs):
+    """QA-B1: обидва виходи з поради (межі в Налаштуваннях / перенесення уроку) справді дозволяють повернути клас."""
     tid = teacher.id
-    classes, journals = window.classes_page, window.journals_page
+    classes = window.classes_page
     c9 = make_class(session, tid, "9-А", students=STUDENTS[:3])
     alg = make_journal(session, tid, c9.id, "Алгебра")
-    make_lesson(session, tid, alg.id, date(2026, 11, 10))
+    lesson = make_lesson(session, tid, alg.id, date(2026, 11, 10))
     ClassService(session).set_class_archived(tid, c9.id, True)
     SettingsService(session).set_semesters(tid, SemesterBoundaries(9, 10, 1, 6))  # листопад — канікули
 
     open_nav(window, 0)
     classes.open_class(c9.id)
     classes.restore_class_btn.click()
-    assert msgs[-1][1] == "Клас не повернуто з архіву"
+    kind, title, text = msgs[-1]
+    assert (kind, title) == ("warning", "Клас не повернуто з архіву")
+    assert "«Налаштування» → «Семестри»" in text and "Налаштування журналу" not in text
 
-    # порада з повідомлення: Журнали → журнал → «Ще» → «Налаштування журналу» (межі журналу охоплюють листопад)
-    open_nav(window, 1)
-    journals.archived_check.setChecked(True)
-    journals.open_journal(alg.id)
-
-    def fit_november(dlg):
-        assert dlg.editable
-        dlg.combos["s1_end"].setCurrentIndex(11)  # грудень
-        button(dlg, "Зберегти").click()
-
-    run = drive(fit_november)
-    journals._on_journal_settings()
-    run.check()
+    if recovery == "settings":
+        # порада 1: змінити межі в «Налаштування» → «Семестри» (листопад знову в I семестрі)
+        open_nav(window, 2)
+        card = window.semesters_card
+        for combo, month in ((card.s1_start, 9), (card.s1_end, 12), (card.s2_start, 1), (card.s2_end, 6)):
+            combo.setCurrentIndex(combo.findData(month))
+        card.save_button.click()
+    else:
+        # порада 2: перенести урок із канікул у журналі архівного класу (його можна редагувати)
+        JournalService(session).update_lesson(tid, lesson.id, date(2026, 10, 12), "regular", None)
 
     open_nav(window, 0)
     classes.open_class(c9.id)
     classes.restore_class_btn.click()
+    assert [m[1] for m in msgs].count("Клас не повернуто з архіву") == 1, msgs  # нових відмов немає
     assert [c.archived for c in ClassService(session).list_classes(tid, True) if c.id == c9.id] == [False]
 
 
@@ -1245,37 +1241,36 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
 
 
 # ---------------------------------------------------------------------------
-# Відомі вади (xfail): кожна — окрема знахідка, перевіряються всі, тест падає, якщо є хоч одна
+# QA-B2, QA-B3 (виправлено): Tab у багаторядкових полях і граматика повідомлення про імпорт
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B2: Tab у багаторядковому полі (імпорт учнів, коментар) вставляє табуляцію й не виводить фокус "
-    "до кнопок; QA-B3: після імпорту «Додано 3 учнів» замість «Додано 3 учні»",
-)
-def test_known_defects_keyboard_and_wording(window, teacher, session, drive, qtbot, msgs):
+def test_s8_tab_leaves_multiline_fields(window, teacher, session, qtbot):
     tid = teacher.id
     c9 = make_class(session, tid, "9-А")
-    failures: list[str] = []
 
-    # QA-B2: після вставлення списку Tab має вести до кнопки «Додати учнів»
+    # після вставлення списку Tab веде до кнопки «Додати учнів»
     dlg = show_dialog(ImportStudentsDialog(tid, c9.id), qtbot)
     dlg.text_edit.setPlainText("\n".join(STUDENTS[:3]))
     dlg.update_preview()
     dlg.text_edit.setFocus()
     QTest.keyClick(dlg.text_edit, Qt.Key.Key_Tab)  # клавіша йде до елемента, що має фокус
-    if dlg.focusWidget() is not dlg.submit_button:
-        failures.append(f"QA-B2: імпорт — Tab залишив фокус на {describe(dlg.focusWidget())}")
+    assert dlg.focusWidget() is dlg.submit_button, describe(dlg.focusWidget())
+    assert "\t" not in dlg.text_edit.toPlainText()
     dlg.close()
+
     dlg = show_dialog(CommentDialog("текст"), qtbot)
     dlg.edit.setFocus()
     QTest.keyClick(dlg.edit, Qt.Key.Key_Tab)
-    if dlg.focusWidget() is dlg.edit:
-        failures.append("QA-B2: коментар — Tab залишив фокус у полі")
+    assert dlg.focusWidget() is not dlg.edit
+    assert "\t" not in dlg.edit.toPlainText()
     dlg.close()
 
-    # QA-B3: граматика повідомлення про результат імпорту (2–4 → «учні»)
+
+def test_s1_import_message_grammar(window, teacher, session, drive, msgs):
+    tid = teacher.id
+    c9 = make_class(session, tid, "9-А")
+
     def do_import(dialog):
         dialog.text_edit.setPlainText("\n".join(STUDENTS[:3]))
         dialog.update_preview()
@@ -1285,9 +1280,7 @@ def test_known_defects_keyboard_and_wording(window, teacher, session, drive, qtb
     ImportStudentsDialog(tid, c9.id).exec()
     run.check()
     text = next(m[2] for m in msgs if m[1] == "Імпорт завершено")
-    if not text.startswith("Додано 3 учні."):
-        failures.append(f"QA-B3: «{text}»")
-    assert not failures, failures
+    assert text.startswith("Додано 3 учні.")
 
 
 # ---------------------------------------------------------------------------
