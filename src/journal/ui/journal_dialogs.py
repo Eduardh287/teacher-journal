@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from journal.services.journal_types import (
     MAX_COMMENT,
+    MAX_HOMEWORK,
     MAX_TOPIC,
     JournalApi,
     JournalCandidate,
@@ -205,7 +206,16 @@ class LessonDialog(_ApiDialog):
 
         self.body.addWidget(field("ДАТА", self.date_edit))
         self.body.addWidget(field("ТИП", self.type_combo))
+        self.homework_edit = QPlainTextEdit()
+        self.homework_edit.setPlaceholderText("необов'язково")
+        self.homework_edit.setFixedHeight(72)
+        self.homework_edit.setTabChangesFocus(True)
+        if lesson and lesson.homework:
+            self.homework_edit.setPlainText(lesson.homework)
+        self.homework_edit.textChanged.connect(self._limit_homework)
+
         self.body.addWidget(field("ТЕМА", self.topic_edit))
+        self.body.addWidget(field("ДОМАШНЄ ЗАВДАННЯ", self.homework_edit))
         self.body.addWidget(self.error_label)
         submit = button("Зберегти" if lesson else "Створити", variant="primary")
         submit.setDefault(True)
@@ -216,19 +226,32 @@ class LessonDialog(_ApiDialog):
             self.topic_edit.setFocus()
             self.topic_edit.selectAll()
 
+    def _limit_homework(self) -> None:
+        text = self.homework_edit.toPlainText()
+        if len(text) > MAX_HOMEWORK:
+            self.homework_edit.setPlainText(text[:MAX_HOMEWORK])
+            cursor = self.homework_edit.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.homework_edit.setTextCursor(cursor)
+
     def _on_submit(self) -> None:
         qd = self.date_edit.date()
         lesson_date = date(qd.year(), qd.month(), qd.day())
         lesson_type: LessonTypeCode = self.type_combo.currentData()
         topic = self.topic_edit.text()
+        homework = self.homework_edit.toPlainText().strip()
         if self.lesson is None:
             ok, info = self.run_service(
-                lambda api: api.create_lesson(self.teacher_id, self.journal_id, lesson_date, lesson_type, topic)
+                lambda api: api.create_lesson(
+                    self.teacher_id, self.journal_id, lesson_date, lesson_type, topic, homework
+                )
             )
         else:
             lesson_id = self.lesson.id
             ok, info = self.run_service(
-                lambda api: api.update_lesson(self.teacher_id, lesson_id, lesson_date, lesson_type, topic)
+                lambda api: api.update_lesson(
+                    self.teacher_id, lesson_id, lesson_date, lesson_type, topic, homework
+                )
             )
         if ok:
             self.result_info = info

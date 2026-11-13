@@ -2,7 +2,7 @@
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
-from journal.models import FinalGrade, Journal, LessonEntry, SchoolClass, Student
+from journal.models import ExtraGrade, FinalGrade, Journal, LessonEntry, SchoolClass, Student
 
 
 class ClassRepository:
@@ -41,10 +41,11 @@ class ClassRepository:
         return bool(self.session.scalar(select(exists().where(Journal.class_id == class_id))))
 
     def student_has_records(self, student_id: int) -> bool:
-        """Чи є в учня відмітки на уроках або підсумкові оцінки."""
+        """Чи є в учня відмітки на уроках, оцінки extra-стовпчиків або підсумкові оцінки."""
         has_entries = exists().where(LessonEntry.student_id == student_id)
         has_finals = exists().where(FinalGrade.student_id == student_id)
-        return bool(self.session.scalar(select(has_entries | has_finals)))
+        has_extra = exists().where(ExtraGrade.student_id == student_id)
+        return bool(self.session.scalar(select(has_entries | has_finals | has_extra)))
 
     def add(self, obj) -> None:
         self.session.add(obj)
