@@ -59,11 +59,27 @@ def lesson_row_text(lesson: LessonInfo) -> str:
 
 
 def merge_rows(
-    lessons: list[LessonInfo], extra_columns: list[ExtraColumnInfo]
+    lessons: list[LessonInfo],
+    extra_columns: list[ExtraColumnInfo],
+    columns: list | None = None,
 ) -> list[LessonInfo | ExtraColumnInfo]:
-    """Уроки й стовпчики без дати в порядку таблиці: стовпчик стоїть після кожного уроку з датою ≤ after_date."""
+    """Уроки й стовпчики без дати в порядку таблиці.
+
+    columns — GridData.columns (авторитетний порядок від сервісу: стовпчик стоїть одразу після
+    уроку, після якого його додали). Без columns — запасний порядок за датою (старі тести).
+    """
+    if columns:
+        lesson_by_id = {lesson.id: lesson for lesson in lessons}
+        extra_by_id = {column.id: column for column in extra_columns}
+        merged: list[LessonInfo | ExtraColumnInfo] = []
+        for column in columns:
+            if column.kind == "lesson" and column.id in lesson_by_id:
+                merged.append(lesson_by_id[column.id])
+            elif column.kind in ("thematic", "notebook") and column.id in extra_by_id:
+                merged.append(extra_by_id[column.id])
+        return merged
     pending = sorted(extra_columns, key=lambda c: (c.after_date, _KIND_ORDER.get(c.kind, 9), c.id))
-    merged: list[LessonInfo | ExtraColumnInfo] = []
+    merged = []
     for lesson in lessons:
         while pending and pending[0].after_date < lesson.lesson_date:
             merged.append(pending.pop(0))
@@ -199,10 +215,16 @@ class LessonPanel(QWidget):
     # Наповнення
     # ------------------------------------------------------------------
 
-    def set_items(self, lessons: list[LessonInfo], extra_columns: list[ExtraColumnInfo], read_only: bool) -> None:
-        """Перебудовує список (єдина точка оновлення); виділений урок зберігається, якщо він ще є."""
+    def set_items(
+        self,
+        lessons: list[LessonInfo],
+        extra_columns: list[ExtraColumnInfo],
+        read_only: bool,
+        columns: list | None = None,
+    ) -> None:
+        """Перебудовує список (єдина точка оновлення); columns — порядок GridData.columns."""
         self._lessons = list(lessons)
-        self._rows = merge_rows(self._lessons, list(extra_columns))
+        self._rows = merge_rows(self._lessons, list(extra_columns), columns)
         self._read_only = read_only
         self._populate()
 

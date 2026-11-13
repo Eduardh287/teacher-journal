@@ -39,6 +39,8 @@ def apply_boundaries(
         else:
             new_semesters[lesson.id] = semester
     # Extra-стовпчики (тематична, зошит) теж прив'язані до дати: їхній семестр перераховується.
+    # after_date завжди дорівнює даті уроку-якоря (сервіс синхронізує її при створенні, перенесенні,
+    # зміні дати й видаленні якоря), тож межі перевіряються за датою якоря.
     columns = repo.extra_columns_of_journals([j.id for j in journals])
     new_column_semesters: dict[int, int] = {}
     for column in columns:

@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 from PySide6.QtWidgets import QLabel
 
-from journal.services.journal_types import MAX_HOMEWORK, JournalError, LessonInfo
+from journal.services.journal_types import MAX_HOMEWORK, ExtraColumnInfo, JournalError, LessonInfo
 from journal.ui.journal_dialogs import EXTRA_COLUMN_TYPES, FINAL_COLUMN_TITLES, LESSON_TYPES, LessonDialog
 
 
@@ -25,6 +25,13 @@ class StubApi:
         return LessonInfo(lesson_id, lesson_date, 1, lesson_type, topic, 0, homework, 1)
 
 
+    def create_column(self, teacher_id, journal_id, kind, after_lesson_id):
+        if self.error:
+            raise self.error
+        self.calls.append(("column", journal_id, kind, after_lesson_id))
+        return ExtraColumnInfo(9, kind, 1, date(2026, 9, 9), 1, 0)
+
+
 @pytest.fixture
 def api():
     return StubApi()
@@ -42,7 +49,7 @@ def factory(api):
 def test_six_dated_types_in_order(qtbot, factory):
     dialog = LessonDialog(1, factory, 5)
     qtbot.addWidget(dialog)
-    names = [dialog.type_combo.itemText(i) for i in range(dialog.type_combo.count())]
+    names = [dialog.type_combo.itemText(i) for i in range(6)]
     assert names == [
         "Звичайний урок", "Контрольна робота", "Лабораторна робота", "Самостійна робота", "Тест", "Проєкт",
     ]

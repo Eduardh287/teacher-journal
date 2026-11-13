@@ -334,14 +334,6 @@ class JournalsPage(QWidget):
             lambda: self.new_lesson_btn.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
         )
         bar.addWidget(self.new_lesson_btn)
-        self.add_column_btn = button("Додати стовпчик")
-        column_menu = QMenu(self.add_column_btn)
-        self.add_thematic_action = column_menu.addAction("Тематична\tCtrl+T")
-        self.add_thematic_action.triggered.connect(lambda: self.add_column("thematic"))
-        self.add_notebook_action = column_menu.addAction("Зошит\tCtrl+Shift+T")
-        self.add_notebook_action.triggered.connect(lambda: self.add_column("notebook"))
-        self.add_column_btn.setMenu(column_menu)
-        bar.addWidget(self.add_column_btn)
         self.menu_btn = button("Ще")
         menu = QMenu(self.menu_btn)
         self.settings_action = menu.addAction("Налаштування журналу")
@@ -464,14 +456,13 @@ class JournalsPage(QWidget):
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
-        self.lesson_panel.set_items(grid.lessons, grid.extra_columns, False)
+        self.lesson_panel.set_items(grid.lessons, grid.extra_columns, False, grid.columns)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
         self.subtitle_label.setText(info.school_year + (" · клас в архіві" if info.class_archived else ""))
         self.semester_buttons[grid.semester].setChecked(True)
         self.new_lesson_btn.setVisible(True)
         self.new_lesson_shortcut.setEnabled(True)
-        self.add_column_btn.setEnabled(bool(grid.lessons))
         self.delete_journal_action.setEnabled(not info.class_archived)
         self.delete_journal_action.setToolTip(
             "Журнал архівного класу не можна видалити" if info.class_archived else ""
@@ -577,7 +568,7 @@ class JournalsPage(QWidget):
     # --- стовпчики без дати («Тематична», «Зошит») ---
 
     def add_column(self, kind: ExtraColumnKind) -> None:
-        """Ctrl+T / Ctrl+Shift+T / меню: стовпчик після останнього уроку відкритого семестру, без діалогу."""
+        """Ctrl+T / Ctrl+Shift+T: стовпчик після останнього уроку відкритого семестру, без діалогу."""
         if self._grid is None or self.stack.currentIndex() != 1:
             return
         self.grid_view.flush_pending()
@@ -602,8 +593,14 @@ class JournalsPage(QWidget):
             f"{lesson.number or i}. {lesson.lesson_date:%d.%m}" + (f" · {lesson.topic}" if lesson.topic else "")
             for i, lesson in enumerate(lessons, start=1)
         ]
-        # Нинішнє місце — останній урок, що йде перед стовпчиком (за прихованою датою).
-        current = max((i for i, lesson in enumerate(lessons) if lesson.lesson_date <= extra.after_date), default=0)
+        # Нинішнє місце — останній урок перед стовпчиком у порядку відображення (GridData.columns).
+        current, lesson_pos = 0, -1
+        for column in model.columns:
+            if column.kind == "lesson":
+                lesson_pos += 1
+            elif column.id == column_id and column.kind == extra.kind:
+                current = max(lesson_pos, 0)
+                break
         name = "тематичну" if extra.kind == "thematic" else "«Зошит»"
         chosen, accepted = QInputDialog.getItem(
             self, "Перемістити стовпчик", f"Після якого уроку поставити {name}?", items, current, False
@@ -649,8 +646,19 @@ class JournalsPage(QWidget):
         return next((x for x in self.grid_view.grid_model.lessons if x.id == lesson_id), None)
 
     def _on_new_lesson(self) -> None:
-        dialog = LessonDialog(self.teacher_id, self._api_factory, self._journal_id, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_info is not None:
+        self.grid_view.flush_pending()
+        lessons = self.grid_view.grid_model.lessons
+        dialog = LessonDialog(
+            self.teacher_id, self._api_factory, self._journal_id, parent=self,
+            after_lesson_id=lessons[-1].id if lessons else None,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.result_column is not None:
+            info = dialog.result_column
+            self.reload_grid(select_column=GridColumn(info.kind, info.id))
+            self.grid_view.setFocus()
+        elif dialog.result_info is not None:
             self._show_lesson(dialog.result_info)
 
     def new_lesson_today(self) -> None:

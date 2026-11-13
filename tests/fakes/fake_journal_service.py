@@ -28,7 +28,6 @@ from journal.services.journal_types import (
 from journal.services.semesters import SemesterBoundaries
 
 DUPLICATE_COLUMN_TEXT = "Після цього уроку вже є такий стовпчик"
-_RANK = {"lesson": 0, "notebook": 1, "thematic": 2}  # за однакової дати: урок → зошит → тематична
 
 
 def half_up(total: int, count: int) -> int:
@@ -71,7 +70,8 @@ class FakeJournalService:
         self.calls: list[tuple] = []
         self.fail_next: JournalError | None = None
         self._next_lesson_id = 1
-        self.columns: list[dict] = []  # {"id", "kind", "date", "grades": {student_id: (grade|None, na)}}
+        # {"id", "kind", "date", "after": id уроку-якоря | None, "grades": {student_id: (grade|None, na)}}
+        self.columns: list[dict] = []
         self._next_column_id = 1
         self.finals: dict[tuple[int, str, int], tuple[int | None, bool]] = {}  # (учень, "semester"/"annual", n)
 
@@ -101,7 +101,8 @@ class FakeJournalService:
         column_id = self._next_column_id
         self._next_column_id += 1
         self.columns.append(
-            {"id": column_id, "kind": kind, "date": self._lesson(after_lesson_id)["date"], "grades": {}}
+            {"id": column_id, "kind": kind, "date": self._lesson(after_lesson_id)["date"],
+             "after": after_lesson_id, "grades": {}}
         )
         return column_id
 
@@ -121,10 +122,21 @@ class FakeJournalService:
     def _semester_of(self, d: date) -> int:
         return semester_for_date(d, self.journal.boundaries)
 
+    def _col_key(self, column: dict) -> tuple:
+        """Як у сервісі: після уроку-якоря (і після стовпчиків, доданих до нього раніше); без якоря —
+        на дату перед усіма її уроками."""
+        anchor = next((r for r in self.lessons if r["id"] == column["after"]), None)
+        if anchor is not None:
+            return (anchor["date"], anchor["id"], 1, column["id"])
+        return (column["date"], 0, 1, column["id"])
+
+    @staticmethod
+    def _lesson_key(row: dict) -> tuple:
+        return (row["date"], row["id"], 0, 0)
+
     def _extra_infos(self, semester: int) -> list[ExtraColumnInfo]:
         cols = sorted(
-            (c for c in self.columns if self._semester_of(c["date"]) == semester),
-            key=lambda c: (c["date"], _RANK[c["kind"]], c["id"]),
+            (c for c in self.columns if self._semester_of(c["date"]) == semester), key=self._col_key
         )
         counts: dict[str, int] = {}
         result = []
@@ -140,25 +152,28 @@ class FakeJournalService:
     # --- обчислення (правила сервісу: н/а = 0, half-up, «Зошит» не враховується) ---
 
     def _compute_semester(self, student_id: int, semester: int):
-        thematics = [c for c in self._extra_infos(semester) if c.kind == "thematic"]
+        thematics = [c for c in self.columns
+                     if c["kind"] == "thematic" and self._semester_of(c["date"]) == semester]
         lessons = [r for r in self.lessons if self._semester_of(r["date"]) == semester]
+        sequence = sorted(
+            [(self._lesson_key(r), r, None) for r in lessons] + [(self._col_key(c), None, c) for c in thematics],
+            key=lambda item: item[0],
+        )
         result: dict[ComputedKey, ComputedCell] = {}
-        previous = None
         values: list[int] = []
-        for column in thematics:
-            grades = []
-            for r in lessons:
-                cell = self.cells.get((student_id, r["id"]))
-                if cell is None or cell.grade is None:
-                    continue
-                if (previous is None or r["date"] > previous) and r["date"] <= column.after_date:
-                    grades.append(cell.grade)
-            previous = column.after_date
+        period: list[int] = []
+        for _, row, column in sequence:
+            if row is not None:
+                cell = self.cells.get((student_id, row["id"]))
+                if cell is not None and cell.grade is not None:
+                    period.append(cell.grade)
+                continue
+            grades, period = period, []
             total, count = sum(grades), len(grades)
             auto = half_up(total, count) if count else None
-            override, na = self._column(column.id)["grades"].get(student_id, (None, False))
+            override, na = column["grades"].get(student_id, (None, False))
             cell = ComputedCell(auto, auto is None, total, count, override, na)
-            result[("thematic", column.id)] = cell
+            result[("thematic", column["id"])] = cell
             values.append(cell.value or 0)
         if values:
             total, count = sum(values), len(values)
@@ -289,8 +304,8 @@ class FakeJournalService:
         cells = {k: v for k, v in self.cells.items() if k[1] in ids}
         info = replace(self.journal, lesson_count=len(self.lessons))
         extras = self._extra_infos(semester)
-        order = [((i.lesson_date, 0, i.id), GridColumn("lesson", i.id)) for i in lessons]
-        order += [((e.after_date, _RANK[e.kind], e.id), GridColumn(e.kind, e.id)) for e in extras]
+        order = [((i.lesson_date, i.id, 0, 0), GridColumn("lesson", i.id)) for i in lessons]
+        order += [(self._col_key(self._column(e.id)), GridColumn(e.kind, e.id)) for e in extras]
         columns = [col for _, col in sorted(order, key=lambda x: x[0])]
         columns.append(GridColumn("semester", None))
         if semester == 2:
@@ -336,6 +351,9 @@ class FakeJournalService:
         self._check_date(lesson_date)
         row.update(date=lesson_date, type=lesson_type, topic=self._topic(topic),
                    homework=self._homework(homework))
+        for column in self.columns:  # стовпчики-супутники їдуть разом з якорем
+            if column["after"] == lesson_id:
+                column["date"] = lesson_date
         return self._info(row)
 
     def set_homework(self, teacher_id, lesson_id, homework) -> LessonInfo:
@@ -362,12 +380,28 @@ class FakeJournalService:
                 f"Урок має оцінки чи позначки ({count}) — його не можна видалити. "
                 "Спершу очистьте клітинки цього уроку."
             )
+        ordered = sorted(self.lessons, key=self._lesson_key)
+        index = ordered.index(row)
+        previous = ordered[index - 1] if index else None
+        attached = [c for c in self.columns if c["after"] == lesson_id]
+        if previous is not None:
+            for column in list(attached):
+                if any(c["kind"] == column["kind"] and c["after"] == previous["id"] for c in self.columns):
+                    if any(g is not None or na for g, na in column["grades"].values()):
+                        raise JournalError("Не можна видалити урок: стовпчик з оцінками мав би стати після "
+                                           "попереднього уроку, де вже є такий стовпчик.")
+                    self.columns.remove(column)
+                    attached.remove(column)
+        for column in attached:
+            column["after"] = previous["id"] if previous is not None else None
+            if previous is not None:
+                column["date"] = previous["date"]
         self.lessons.remove(row)
 
     def create_column(self, teacher_id, journal_id, kind, after_lesson_id) -> ExtraColumnInfo:
         self._enter("create_column", journal_id, kind, after_lesson_id)
         after = self._lesson(after_lesson_id)
-        if any(c["kind"] == kind and c["date"] == after["date"] for c in self.columns):
+        if any(c["kind"] == kind and c["after"] == after_lesson_id for c in self.columns):
             raise JournalError(DUPLICATE_COLUMN_TEXT)
         column_id = self.add_column(kind, after_lesson_id)
         return next(i for i in self._extra_infos(self._semester_of(after["date"])) if i.id == column_id)
@@ -376,8 +410,10 @@ class FakeJournalService:
         self._enter("move_column", column_id, after_lesson_id)
         column = self._column(column_id)
         after = self._lesson(after_lesson_id)
-        if any(c is not column and c["kind"] == column["kind"] and c["date"] == after["date"] for c in self.columns):
+        if any(c is not column and c["kind"] == column["kind"] and c["after"] == after_lesson_id
+               for c in self.columns):
             raise JournalError(DUPLICATE_COLUMN_TEXT)
+        column["after"] = after_lesson_id
         column["date"] = after["date"]
         return next(i for i in self._extra_infos(self._semester_of(after["date"])) if i.id == column_id)
 
