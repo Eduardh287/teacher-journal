@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -158,14 +159,22 @@ class FinalGrade(Base):
 class ExtraColumn(TimestampMixin, Base):
     """Стовпчик без дати: «Тематична» або «Зошит».
 
-    after_date — прихований ключ сортування (дата уроку-якоря); стовпчик стоїть після
-    усіх уроків з lesson_date <= after_date. Один стовпчик виду на дату.
+    after_lesson_id — урок-якір: стовпчик стоїть одразу після нього (і після всіх стовпчиків, доданих
+    до нього раніше), а уроки, створені пізніше навіть того самого дня, — після стовпчика. Якщо якоря
+    немає (NULL: урок-якір видалено першим у журналі або дані до міграції), стовпчик стоїть на
+    дату after_date ПЕРЕД усіма уроками цієї дати. after_date — дата якоря (семестр, межі семестрів).
+    Один стовпчик виду після одного уроку.
     """
 
     __tablename__ = "extra_columns"
     __table_args__ = (
         CheckConstraint("semester IN (1, 2)", name="semester"),
-        UniqueConstraint("journal_id", "kind", "after_date"),
+        Index(
+            "uq_extra_columns_journal_id_kind_after_lesson_id",
+            "journal_id", "kind", "after_lesson_id",
+            unique=True,
+            postgresql_where=text("after_lesson_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -173,6 +182,9 @@ class ExtraColumn(TimestampMixin, Base):
     kind: Mapped[ExtraColumnKind] = mapped_column(_text_enum(ExtraColumnKind, "extra_column_kind"))
     semester: Mapped[int] = mapped_column(SmallInteger)
     after_date: Mapped[date] = mapped_column(Date)
+    after_lesson_id: Mapped[int | None] = mapped_column(
+        ForeignKey("lessons.id", ondelete="SET NULL"), index=True
+    )
 
     journal: Mapped[Journal] = relationship(back_populates="extra_columns")
     grades: Mapped[list["ExtraGrade"]] = relationship(

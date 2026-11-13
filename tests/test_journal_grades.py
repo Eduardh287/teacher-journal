@@ -311,11 +311,12 @@ def test_create_column_rules(ctx):
         ctx.svc.create_column(ctx.t.id, ctx.j.id, "semester", l1.id)
 
 
-def test_same_day_lessons_share_anchor_date(ctx):
+def test_same_day_lessons_have_separate_anchors(ctx):
     a, b = ctx.lesson(D[0]), ctx.lesson(D[0])
     ctx.column("thematic", a)
+    ctx.column("thematic", b)  # якір - конкретний урок, а не дата
     with pytest.raises(JournalError, match="вже є такий стовпчик"):
-        ctx.column("thematic", b)  # та сама дата → той самий ключ
+        ctx.column("thematic", b)
 
 
 def test_grid_column_order_and_keys(ctx):
@@ -324,7 +325,7 @@ def test_grid_column_order_and_keys(ctx):
     nb = ctx.column("notebook", l2)
     grid = ctx.svc.get_grid(ctx.t.id, ctx.j.id, 1)
     assert [(c.kind, c.id) for c in grid.columns] == [
-        ("lesson", l1.id), ("lesson", l2.id), ("notebook", nb.id), ("thematic", t.id),
+        ("lesson", l1.id), ("lesson", l2.id), ("thematic", t.id), ("notebook", nb.id),
         ("lesson", l3.id), ("semester", None),
     ]
     assert {(x.kind, x.ordinal) for x in grid.extra_columns} == {("thematic", 1), ("notebook", 1)}
@@ -482,3 +483,183 @@ def test_withdrawn_student_with_only_extra_grade_stays_listed(ctx, classes, teac
 def test_subject_pp_tfv_present_once(session):
     names = [s.name for s in session.scalars(select(Subject)).all()]
     assert names.count("ПП ТФВ") == 1
+
+
+# ---------- порядок стовпчиків: стоять там, де їх додали ----------
+
+
+def _order(ctx, semester=1):
+    grid = ctx.svc.get_grid(ctx.t.id, ctx.j.id, semester)
+    names = {("lesson", x.id): f"У{i}" for i, x in enumerate(ctx.made, start=1)}
+    names.update({("thematic", x.id): "Тем" for x in grid.extra_columns if x.kind == "thematic"})
+    names.update({("notebook", x.id): "Зош" for x in grid.extra_columns if x.kind == "notebook"})
+    names.update({("semester", None): "Сем", ("annual", None): "Рік"})
+    return " | ".join(names[(c.kind, c.id)] for c in grid.columns)
+
+
+@pytest.fixture
+def lessons_made(ctx):
+    """Створює уроки й пам'ятає їх у ctx.made (мітки «У1…» у _order — за порядком у цьому списку)."""
+    ctx.made = []
+
+    def make(d):
+        lesson = ctx.lesson(d)
+        ctx.made.append(lesson)
+        return lesson
+
+    return make
+
+
+def test_columns_stay_where_added_even_with_later_same_day_lessons(ctx, lessons_made):
+    lessons_made(date(2026, 11, 13))
+    l2 = lessons_made(date(2026, 11, 13))
+    ctx.column("thematic", l2)
+    ctx.column("notebook", l2)
+    lessons_made(date(2026, 11, 13))
+    lessons_made(date(2026, 11, 14))
+    assert _order(ctx) == "У1 | У2 | Тем | Зош | У3 | У4 | Сем"
+
+
+def test_same_day_lesson_after_thematic_feeds_next_period(ctx, lessons_made):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[0])
+    ctx.grade(l1, 6)
+    ctx.grade(l2, 8)
+    t1 = ctx.column("thematic", l2)
+    l3 = lessons_made(D[0])
+    ctx.grade(l3, 12)
+    l4 = lessons_made(D[1])
+    t2 = ctx.column("thematic", l4)
+    cells = ctx.cells()
+    assert cells[("thematic", t1.id)].auto == 7  # (6+8)/2, без У3
+    assert cells[("thematic", t2.id)].auto == 12  # У3 (того ж дня, але пізніше) → наступний період
+
+
+def test_two_columns_after_one_lesson_keep_creation_order(ctx, lessons_made):
+    l1 = lessons_made(D[0])
+    nb = ctx.column("notebook", l1)
+    t = ctx.column("thematic", l1)
+    lessons_made(D[1])
+    grid = ctx.svc.get_grid(ctx.t.id, ctx.j.id, 1)
+    assert [(c.kind, c.id) for c in grid.columns][:3] == [("lesson", l1.id), ("notebook", nb.id), ("thematic", t.id)]
+
+
+def test_backdated_lesson_sorts_by_date_before_column(ctx, lessons_made):
+    lessons_made(D[1])
+    l2 = lessons_made(D[2])
+    ctx.column("thematic", l2)
+    lessons_made(D[0])  # створений пізніше, але датований раніше
+    ctx.made.sort(key=lambda x: x.lesson_date)
+    assert _order(ctx) == "У1 | У2 | У3 | Тем | Сем"
+
+
+def test_move_column_reanchors(ctx, lessons_made):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[1])
+    lessons_made(D[2])
+    t = ctx.column("thematic", l1)
+    assert _order(ctx) == "У1 | Тем | У2 | У3 | Сем"
+    ctx.svc.move_column(ctx.t.id, t.id, l2.id)
+    assert _order(ctx) == "У1 | У2 | Тем | У3 | Сем"
+    assert ctx.svc.repo.get_extra_column(t.id).after_lesson_id == l2.id
+
+
+def test_delete_anchor_lesson_keeps_column_after_previous(ctx, lessons_made, session):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[1])
+    lessons_made(D[2])
+    t = ctx.column("thematic", l2)
+    ctx.svc.delete_lesson(ctx.t.id, l2.id)
+    ctx.made.remove(l2)
+    assert _order(ctx) == "У1 | Тем | У2 | Сем"
+    assert session.get(ExtraColumn, t.id).after_lesson_id == l1.id
+
+
+def test_delete_first_anchor_lesson_column_goes_to_start_of_its_date(ctx, lessons_made, session):
+    l1 = lessons_made(D[0])
+    lessons_made(D[1])
+    t = ctx.column("notebook", l1)
+    ctx.svc.delete_lesson(ctx.t.id, l1.id)
+    ctx.made.remove(l1)
+    assert _order(ctx) == "Зош | У1 | Сем"
+    col = session.get(ExtraColumn, t.id)
+    assert (col.after_lesson_id, col.after_date) == (None, D[0])
+
+
+def test_delete_anchor_lesson_with_duplicate_on_previous_drops_empty_column(ctx, lessons_made, session):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[1])
+    ctx.column("thematic", l1)
+    t2 = ctx.column("thematic", l2)
+    ctx.svc.delete_lesson(ctx.t.id, l2.id)
+    assert session.get(ExtraColumn, t2.id) is None
+
+
+def test_delete_anchor_lesson_blocked_when_duplicate_has_grades(ctx, lessons_made):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[1])
+    ctx.column("thematic", l1)
+    t2 = ctx.column("thematic", l2)
+    ctx.override(("thematic", t2.id), 9)
+    with pytest.raises(JournalError, match="вже є такий стовпчик"):
+        ctx.svc.delete_lesson(ctx.t.id, l2.id)
+
+
+def test_changing_anchor_lesson_date_moves_column(ctx, lessons_made, session):
+    l1, l2 = lessons_made(D[0]), lessons_made(D[2])
+    t = ctx.column("thematic", l1)
+    ctx.svc.update_lesson(ctx.t.id, l1.id, D[3], "regular", None)
+    grid = ctx.svc.get_grid(ctx.t.id, ctx.j.id, 1)
+    assert [(c.kind, c.id) for c in grid.columns] == [
+        ("lesson", l2.id), ("lesson", l1.id), ("thematic", t.id), ("semester", None)
+    ]
+    assert session.get(ExtraColumn, t.id).after_date == D[3]
+
+
+def test_changing_anchor_lesson_date_to_other_semester_moves_column(ctx, lessons_made, session):
+    l1 = lessons_made(D[0])
+    t = ctx.column("thematic", l1)
+    ctx.svc.update_lesson(ctx.t.id, l1.id, S2[0], "regular", None)
+    assert session.get(ExtraColumn, t.id).semester == 2
+    assert [x.id for x in ctx.svc.get_grid(ctx.t.id, ctx.j.id, 2).extra_columns] == [t.id]
+    assert ctx.svc.get_grid(ctx.t.id, ctx.j.id, 1).extra_columns == []
+    with pytest.raises(JournalError):  # канікули: така сама перевірка, як для уроку
+        ctx.svc.update_lesson(ctx.t.id, l1.id, date(2026, 7, 10), "regular", None)
+
+
+def test_migration_backfills_anchor_lesson(session, ctx):
+    import importlib.util
+
+    from sqlalchemy import text
+
+    from journal.config import PROJECT_ROOT
+
+    path = next((PROJECT_ROOT / "migrations" / "versions").glob("*a7c41d9e5b02*.py"))
+    spec = importlib.util.spec_from_file_location("mig_a7c41d9e5b02", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    a, b = ctx.lesson(D[0]), ctx.lesson(D[0])
+    col = ExtraColumn(journal_id=ctx.j.id, kind="thematic", semester=1, after_date=D[0])
+    orphan = ExtraColumn(journal_id=ctx.j.id, kind="notebook", semester=1, after_date=D[3])  # уроків на дату немає
+    session.add_all([col, orphan])
+    session.flush()
+    assert col.after_lesson_id is None
+    session.execute(text(module.BACKFILL_SQL))
+    session.refresh(col)
+    session.refresh(orphan)
+    assert col.after_lesson_id == max(a.id, b.id)  # останній урок цієї дати
+    assert orphan.after_lesson_id is None
+
+
+def test_delete_first_lesson_of_semester2_keeps_column_in_semester2(ctx, session):
+    """Рецензія Fable (PR #16): стовпчик не «переїжджає» в І семестр і не змінює його оцінок."""
+    from datetime import date
+
+    l1 = ctx.svc.create_lesson(ctx.t.id, ctx.j.id, date(2026, 12, 1))   # І семестр
+    l2 = ctx.svc.create_lesson(ctx.t.id, ctx.j.id, date(2027, 1, 12))   # ІІ семестр
+    t = ctx.svc.create_column(ctx.t.id, ctx.j.id, "thematic", l2.id)
+    ctx.svc.set_override(ctx.t.id, ctx.j.id, ctx.s, ("thematic", t.id), 4)
+    before = ctx.svc.student_computed(ctx.t.id, ctx.j.id, ctx.s)
+    ctx.svc.delete_lesson(ctx.t.id, l2.id)
+    column = session.get(ExtraColumn, t.id)
+    assert column.semester == 2 and column.after_lesson_id is None
+    after = ctx.svc.student_computed(ctx.t.id, ctx.j.id, ctx.s)
+    assert after[("semester", 1)] == before[("semester", 1)]
+    assert after[("semester", 2)].value == 4
+    assert l1.id  # урок І семестру не зачеплено
