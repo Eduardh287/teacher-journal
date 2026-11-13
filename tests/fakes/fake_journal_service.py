@@ -384,7 +384,7 @@ class FakeJournalService:
         index = ordered.index(row)
         previous = ordered[index - 1] if index else None
         # як у сервісі: лише попередній урок того самого семестру
-        if previous is not None and self._semester_of(previous) != self._semester_of(row):
+        if previous is not None and self._semester_of(previous["date"]) != self._semester_of(row["date"]):
             previous = None
         attached = [c for c in self.columns if c["after"] == lesson_id]
         if previous is not None:
