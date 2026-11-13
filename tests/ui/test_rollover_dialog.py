@@ -1,6 +1,7 @@
 """Вікно переходу на новий навчальний рік: тексти, галочка, «Гаразд» / «Пізніше» (без БД)."""
 from contextlib import contextmanager
 from datetime import date
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import QDialog, QMessageBox
 
@@ -136,3 +137,43 @@ def test_apply_error_shows_message_without_names(qtbot, monkeypatch):
     assert not maybe_run_rollover(window, 7, TODAY, service.factory(), dialog_factory(ACCEPT))
     assert len(shown) == 1 and "9-А" not in shown[0]
     assert window.refreshed == []
+
+
+def catch_up(name="9-А", year="2024-2025", new="11-А", new_year="2026-2027", skipped=1):
+    # простий стаб: не залежить від того, чи вже має RolloverItem поле years_skipped
+    return SimpleNamespace(
+        class_id=1, class_name=name, school_year=year, action="promote", new_name=new, new_year=new_year,
+        target_exists=False, student_count=25, subject_names=("Алгебра",), years_skipped=skipped,
+    )
+
+
+def test_catch_up_line_for_skipped_years():
+    assert item_text(catch_up()) == "9-А (2024-2025) → 11-А (2026-2027) · пропущено 1 рік"
+    assert item_text(catch_up(skipped=2)).endswith("· пропущено 2 роки")
+    assert item_text(catch_up(skipped=5)).endswith("· пропущено 5 років")
+
+
+def test_no_catch_up_text_when_nothing_skipped():
+    assert item_text(catch_up(skipped=0)) == "9-А → 11-А (2026-2027), учнів: 25"
+
+
+def test_years_word_forms():
+    from journal.ui.rollover_dialog import years_word
+
+    assert [years_word(n) for n in (1, 2, 4, 5, 11, 12, 21, 22, 25)] == [
+        "1 рік", "2 роки", "4 роки", "5 років", "11 років", "12 років", "21 рік", "22 роки", "25 років",
+    ]
+
+
+def test_dialog_shows_catch_up_line_and_note(qtbot):
+    dialog = RolloverDialog([catch_up(), promote()])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.lines[0].text() == "9-А (2024-2025) → 11-А (2026-2027) · пропущено 1 рік"
+    assert dialog.catch_up_note is not None and "архів" in dialog.catch_up_note.text()
+
+
+def test_dialog_without_catch_up_has_no_note(qtbot):
+    dialog = RolloverDialog([promote(), archive()])
+    qtbot.addWidget(dialog)
+    assert dialog.catch_up_note is None
