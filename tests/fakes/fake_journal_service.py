@@ -82,7 +82,13 @@ class FakeJournalService:
     def _info(self, row: dict) -> LessonInfo:
         count = sum(1 for (_, lid) in self.cells if lid == row["id"])
         semester = semester_for_date(row["date"], self.journal.boundaries)
-        return LessonInfo(row["id"], row["date"], semester, row["type"], row["topic"], count)
+        # Наскрізний номер за рік: порядок (дата, id) серед усіх уроків журналу (етап 6).
+        ordered = sorted(self.lessons, key=lambda r: (r["date"], r["id"]))
+        number = next(i for i, r in enumerate(ordered, start=1) if r["id"] == row["id"])
+        return LessonInfo(
+            row["id"], row["date"], semester, row["type"], row["topic"], count,
+            homework=row.get("homework"), number=number,
+        )
 
     def _lesson(self, lesson_id: int) -> dict:
         for row in self.lessons:
@@ -180,20 +186,40 @@ class FakeJournalService:
             raise JournalError(f"Тема — не довше {MAX_TOPIC} символів")
         return topic
 
-    def create_lesson(self, teacher_id, journal_id, lesson_date, lesson_type="regular", topic=None) -> LessonInfo:
+    def create_lesson(
+        self, teacher_id, journal_id, lesson_date, lesson_type="regular", topic=None, homework=None
+    ) -> LessonInfo:
         self._enter("create_lesson", journal_id, lesson_date, lesson_type, topic)
         self._check_writable()
         self._check_date(lesson_date)
         lesson_id = self.add_lesson(lesson_date, lesson_type, self._topic(topic))
+        self._lesson(lesson_id)["homework"] = self._homework(homework)
         return self._info(self._lesson(lesson_id))
 
-    def update_lesson(self, teacher_id, lesson_id, lesson_date, lesson_type, topic) -> LessonInfo:
+    def update_lesson(
+        self, teacher_id, lesson_id, lesson_date, lesson_type, topic, homework=None
+    ) -> LessonInfo:
         self._enter("update_lesson", lesson_id, lesson_date, lesson_type, topic)
         self._check_writable()
         row = self._lesson(lesson_id)
         self._check_date(lesson_date)
-        row.update(date=lesson_date, type=lesson_type, topic=self._topic(topic))
+        row.update(date=lesson_date, type=lesson_type, topic=self._topic(topic),
+                   homework=self._homework(homework))
         return self._info(row)
+
+    def set_homework(self, teacher_id, lesson_id, homework) -> LessonInfo:
+        self._enter("set_homework", lesson_id, homework)
+        row = self._lesson(lesson_id)
+        row["homework"] = self._homework(homework)
+        return self._info(row)
+
+    @staticmethod
+    def _homework(text):
+        """Як у сервісі: trim, порожнє → None, понад 500 символів → помилка."""
+        text = (text or "").strip()
+        if len(text) > 500:
+            raise JournalError("Домашнє завдання — не довше 500 символів")
+        return text or None
 
     def delete_lesson(self, teacher_id: int, lesson_id: int) -> None:
         self._enter("delete_lesson", lesson_id)

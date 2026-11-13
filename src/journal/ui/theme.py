@@ -43,6 +43,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "lesson_test_soft": "#F4EBFF",
         "lesson_lab_soft": "#DCFAE6",
         "lesson_independent_soft": "#FEF6EE",
+        "lesson_quiz_soft": "#CFF9FE",
+        "lesson_project_soft": "#FCE7F6",
+        "col_thematic_soft": "#E0EAFF",
+        "col_notebook_soft": "#FEF7C3",
+        "col_final_soft": "#EAECF0",
     },
     "dark": {
         "bg": "#0F1117",
@@ -69,6 +74,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "lesson_test_soft": "#2E2350",
         "lesson_lab_soft": "#123222",
         "lesson_independent_soft": "#3A2814",
+        "lesson_quiz_soft": "#0E3A44",
+        "lesson_project_soft": "#3F1D38",
+        "col_thematic_soft": "#1F2A52",
+        "col_notebook_soft": "#3A3210",
+        "col_final_soft": "#2A2F3A",
     },
 }
 
