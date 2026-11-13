@@ -37,8 +37,24 @@ def default_service_factory():
         yield RolloverService(session)
 
 
+def years_word(count: int) -> str:
+    """«1 рік», «2 роки», «5 років», «11 років», «21 рік»."""
+    if count % 10 == 1 and count % 100 != 11:
+        return f"{count} рік"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return f"{count} роки"
+    return f"{count} років"
+
+
 def item_text(item: RolloverItem) -> str:
-    """«9-А → 10-А (2027-2028), учнів: 28», «9-Б → архів (10-Б уже існує)», «11-Б → архів»."""
+    """«9-А → 10-А (2027-2028), учнів: 28», «9-Б → архів (10-Б уже існує)», «11-Б → архів»;
+    за пропущені роки: «9-А (2024-2025) → 11-А (2026-2027) · пропущено 1 рік»."""
+    skipped = getattr(item, "years_skipped", 0)
+    if item.action == "promote" and skipped > 0 and not item.target_exists:
+        return (
+            f"{item.class_name} ({item.school_year}) → {item.new_name} ({item.new_year})"
+            f" · пропущено {years_word(skipped)}"
+        )
     if item.action == "promote":
         if item.target_exists:
             return f"{item.class_name} → архів ({item.new_name} уже існує)"
@@ -62,6 +78,14 @@ class RolloverDialog(QDialog):
         self.lines = [label(item_text(item), wrap=True) for item in items]
         for line in self.lines:
             layout.addWidget(line)
+        self.catch_up_note = None
+        if any(getattr(i, "years_skipped", 0) > 0 for i in items):
+            self.catch_up_note = label(
+                "За пропущені роки буде створено порожні класи в архіві (без учнів і журналів).",
+                muted=True,
+                wrap=True,
+            )
+            layout.addWidget(self.catch_up_note)
         layout.addWidget(
             label("Старі класи разом із журналами й оцінками буде збережено в архіві без змін.", muted=True, wrap=True)
         )

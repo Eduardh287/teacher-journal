@@ -1,6 +1,7 @@
 from datetime import date
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     Enum,
@@ -14,9 +15,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from journal.models.base import Base, TimestampMixin
-from journal.models.enums import Attendance, FinalGradeKind, LessonType
+from journal.models.enums import Attendance, ExtraColumnKind, FinalGradeKind, LessonType
 
 GRADE_RANGE = "grade BETWEEN 1 AND 12"
+# Рівно одне з двох: оцінка або ручна позначка «н/а».
+GRADE_OR_NA = "(grade IS NOT NULL AND NOT is_na) OR (grade IS NULL AND is_na)"
 
 
 def _text_enum(enum_cls, name: str) -> Enum:
@@ -74,6 +77,9 @@ class Journal(TimestampMixin, Base):
     final_grades: Mapped[list["FinalGrade"]] = relationship(
         back_populates="journal", cascade="save-update, merge", passive_deletes="all"
     )
+    extra_columns: Mapped[list["ExtraColumn"]] = relationship(
+        back_populates="journal", cascade="save-update, merge", passive_deletes="all"
+    )
 
 
 class Lesson(TimestampMixin, Base):
@@ -90,6 +96,7 @@ class Lesson(TimestampMixin, Base):
     lesson_date: Mapped[date] = mapped_column(Date)
     semester: Mapped[int] = mapped_column(SmallInteger)
     topic: Mapped[str | None] = mapped_column(String(255))
+    homework: Mapped[str | None] = mapped_column(Text)  # домашнє завдання (до 500 символів, перевіряє сервіс)
     lesson_type: Mapped[LessonType] = mapped_column(
         _text_enum(LessonType, "lesson_type"), default=LessonType.REGULAR, server_default="regular"
     )
@@ -126,7 +133,10 @@ class FinalGrade(Base):
     """Підсумкова оцінка: за 1-й семестр, 2-й семестр або річна."""
 
     __tablename__ = "final_grades"
-    __table_args__ = (CheckConstraint(GRADE_RANGE, name="grade_range"),)
+    __table_args__ = (
+        CheckConstraint(GRADE_RANGE, name="grade_range"),
+        CheckConstraint(GRADE_OR_NA, name="grade_or_na"),
+    )
 
     journal_id: Mapped[int] = mapped_column(
         ForeignKey("journals.id", ondelete="RESTRICT"), primary_key=True
@@ -137,7 +147,56 @@ class FinalGrade(Base):
     kind: Mapped[FinalGradeKind] = mapped_column(
         _text_enum(FinalGradeKind, "final_grade_kind"), primary_key=True
     )
-    grade: Mapped[int] = mapped_column(SmallInteger)
+    # Рядок = ручне значення (override): оцінка або «н/а». Автоматичні значення не зберігаються.
+    grade: Mapped[int | None] = mapped_column(SmallInteger)
+    is_na: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     journal: Mapped[Journal] = relationship(back_populates="final_grades")
+    student: Mapped["Student"] = relationship()  # noqa: F821
+
+
+class ExtraColumn(TimestampMixin, Base):
+    """Стовпчик без дати: «Тематична» або «Зошит».
+
+    after_date — прихований ключ сортування (дата уроку-якоря); стовпчик стоїть після
+    усіх уроків з lesson_date <= after_date. Один стовпчик виду на дату.
+    """
+
+    __tablename__ = "extra_columns"
+    __table_args__ = (
+        CheckConstraint("semester IN (1, 2)", name="semester"),
+        UniqueConstraint("journal_id", "kind", "after_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("journals.id", ondelete="RESTRICT"))
+    kind: Mapped[ExtraColumnKind] = mapped_column(_text_enum(ExtraColumnKind, "extra_column_kind"))
+    semester: Mapped[int] = mapped_column(SmallInteger)
+    after_date: Mapped[date] = mapped_column(Date)
+
+    journal: Mapped[Journal] = relationship(back_populates="extra_columns")
+    grades: Mapped[list["ExtraGrade"]] = relationship(
+        back_populates="column", cascade="all, delete-orphan"
+    )
+
+
+class ExtraGrade(Base):
+    """Оцінка в extra-стовпчику: для тематичної — ручне значення, для «Зошита» — сама оцінка."""
+
+    __tablename__ = "extra_grades"
+    __table_args__ = (
+        CheckConstraint(GRADE_RANGE, name="grade_range"),
+        CheckConstraint(GRADE_OR_NA, name="grade_or_na"),
+    )
+
+    column_id: Mapped[int] = mapped_column(
+        ForeignKey("extra_columns.id", ondelete="CASCADE"), primary_key=True
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="RESTRICT"), primary_key=True, index=True
+    )
+    grade: Mapped[int | None] = mapped_column(SmallInteger)
+    is_na: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    column: Mapped[ExtraColumn] = relationship(back_populates="grades")
     student: Mapped["Student"] = relationship()  # noqa: F821

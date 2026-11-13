@@ -3,7 +3,6 @@
 UI працює лише з JournalApi (через api_factory) та його DTO. За замовчуванням кожен виклик —
 окрема транзакція journal.db.session_scope(). JournalError ловимо ПОЗА блоком with (відкат).
 """
-from dataclasses import replace
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -34,6 +34,10 @@ from journal.services.auth_service import CurrentUser
 from journal.services.journal_types import (
     AttendanceCode,
     CellInfo,
+    ComputedCell,
+    ComputedKey,
+    ExtraColumnKind,
+    GridColumn,
     GridData,
     JournalApi,
     JournalError,
@@ -42,7 +46,7 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.ui import icons, theme
-from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
+from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
 from journal.ui.widgets import ElidedLabel, button, card, label
@@ -141,13 +145,21 @@ class JournalsPage(QWidget):
     # Звернення до сервісу
     # ------------------------------------------------------------------
 
-    def _call(self, action: Callable[[JournalApi], Any], *, banner: bool = False) -> tuple[bool, Any]:
-        """Виконує action в одній транзакції. Повертає (успіх, результат); помилку показує."""
+    def _call(
+        self, action: Callable[[JournalApi], Any], *, banner: bool = False, inform: bool = False
+    ) -> tuple[bool, Any]:
+        """Виконує action в одній транзакції. Повертає (успіх, результат); помилку показує.
+
+        inform=True: відмову сервісу показуємо інформаційним вікном (а не банером) — «чому не можна».
+        """
         try:
             with self._api_factory() as api:
                 result = action(api)
         except JournalError as error:
-            self._report(str(error), banner)
+            if inform:
+                QMessageBox.information(self, "Дію не виконано", str(error))
+            else:
+                self._report(str(error), banner)
             return False, None
         except Exception:
             logging.exception("Помилка під час роботи з журналами")
@@ -322,6 +334,14 @@ class JournalsPage(QWidget):
             lambda: self.new_lesson_btn.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
         )
         bar.addWidget(self.new_lesson_btn)
+        self.add_column_btn = button("Додати стовпчик")
+        column_menu = QMenu(self.add_column_btn)
+        self.add_thematic_action = column_menu.addAction("Тематична\tCtrl+T")
+        self.add_thematic_action.triggered.connect(lambda: self.add_column("thematic"))
+        self.add_notebook_action = column_menu.addAction("Зошит\tCtrl+Shift+T")
+        self.add_notebook_action.triggered.connect(lambda: self.add_column("notebook"))
+        self.add_column_btn.setMenu(column_menu)
+        bar.addWidget(self.add_column_btn)
         self.menu_btn = button("Ще")
         menu = QMenu(self.menu_btn)
         self.settings_action = menu.addAction("Налаштування журналу")
@@ -348,13 +368,19 @@ class JournalsPage(QWidget):
         self.content_stack = QStackedWidget()
         self.grid_view = JournalGridView()
         self.grid_view.saver = self._save_cell
+        self.grid_view.override_saver = self._save_override
         self.grid_view.lesson_edit_requested.connect(self._on_edit_lesson)
         self.grid_view.lesson_delete_requested.connect(self._on_delete_lesson)
+        self.grid_view.column_move_requested.connect(self._on_move_column)
+        self.grid_view.column_delete_requested.connect(self._on_delete_column)
         self.grid_view.selectionModel().currentColumnChanged.connect(self._on_grid_column_changed)
         self.lesson_panel = LessonPanel()
         self.lesson_panel.lesson_selected.connect(self._on_panel_lesson_selected)
         self.lesson_panel.lesson_edit_requested.connect(lambda lid: self._on_edit_lesson(lid, focus_topic=True))
         self.lesson_panel.lesson_delete_requested.connect(self._on_delete_lesson)
+        self.lesson_panel.homework_edited.connect(self._on_homework_edited)
+        self.lesson_panel.column_move_requested.connect(self._on_move_column)
+        self.lesson_panel.column_delete_requested.connect(self._on_delete_column)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.addWidget(self.grid_view)
@@ -371,6 +397,11 @@ class JournalsPage(QWidget):
         shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         shortcut.activated.connect(self.new_lesson_today)
         self.new_lesson_shortcut = shortcut
+        for sequence, kind in (("Ctrl+T", "thematic"), ("Ctrl+Shift+T", "notebook")):
+            column_shortcut = QShortcut(QKeySequence(sequence), view)
+            column_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            column_shortcut.activated.connect(lambda k=kind: self.add_column(k))
+            setattr(self, f"{kind}_shortcut", column_shortcut)
         return view
 
     def _build_empty_grid(self) -> QWidget:
@@ -422,23 +453,25 @@ class JournalsPage(QWidget):
         else:
             self.show_list()
 
-    def reload_grid(self, select_lesson_id: int | None = None) -> bool:
+    def reload_grid(self, select_lesson_id: int | None = None, select_column: GridColumn | None = None) -> bool:
         """Підтягує таблицю семестру. Повертає False, якщо журнал недоступний."""
         self.grid_view.flush_pending()
         keep = self._current_cell_ref()
+        keep_row = self.grid_view.currentIndex().row()
         journal_id, semester = self._journal_id, self._semester
         ok, grid = self._call(lambda api: api.get_grid(self.teacher_id, journal_id, semester), banner=True)
         if not ok:
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
-        self.lesson_panel.set_lessons(grid.lessons, False)
+        self.lesson_panel.set_items(grid.lessons, grid.extra_columns, False)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
         self.subtitle_label.setText(info.school_year + (" · клас в архіві" if info.class_archived else ""))
         self.semester_buttons[grid.semester].setChecked(True)
         self.new_lesson_btn.setVisible(True)
         self.new_lesson_shortcut.setEnabled(True)
+        self.add_column_btn.setEnabled(bool(grid.lessons))
         self.delete_journal_action.setEnabled(not info.class_archived)
         self.delete_journal_action.setToolTip(
             "Журнал архівного класу не можна видалити" if info.class_archived else ""
@@ -453,7 +486,9 @@ class JournalsPage(QWidget):
             self.empty_lesson_btn.setVisible(True)
             self.empty_hint.hide()
         self.content_stack.setCurrentIndex(0 if grid.students and grid.lessons else 1)
-        if select_lesson_id is not None:
+        if select_column is not None:
+            self.grid_view.select_cell(max(keep_row, 0), self.grid_view.grid_model.column_index(select_column))
+        elif select_lesson_id is not None:
             column = self.grid_view.grid_model.column_of(select_lesson_id)
             self.grid_view.select_cell(0, column)
         else:
@@ -461,22 +496,22 @@ class JournalsPage(QWidget):
         self._sync_panel()
         return True
 
-    def _current_cell_ref(self) -> tuple[int, int] | None:
-        """(id учня, id уроку) поточної клітинки — щоб після перезавантаження стати на ту саму."""
+    def _current_cell_ref(self) -> tuple[int, GridColumn] | None:
+        """(id учня, стовпець) поточної клітинки — щоб після перезавантаження стати на ту саму."""
         index = self.grid_view.currentIndex()
         model = self.grid_view.grid_model
-        if not index.isValid() or index.row() >= len(model.students) or index.column() >= len(model.lessons):
+        if not index.isValid() or index.row() >= len(model.students) or index.column() >= len(model.columns):
             return None
-        return model.students[index.row()].id, model.lessons[index.column()].id
+        return model.students[index.row()].id, model.columns[index.column()]
 
-    def _restore_cell(self, ref: tuple[int, int] | None) -> None:
-        """Повертає курсор на клітинку (учень, урок); якщо її вже немає — на (0, 0)."""
+    def _restore_cell(self, ref: tuple[int, GridColumn] | None) -> None:
+        """Повертає курсор на клітинку (учень, стовпець); якщо її вже немає — на (0, 0)."""
         model = self.grid_view.grid_model
         row = column = 0
         if ref is not None:
-            student_id, lesson_id = ref
+            student_id, grid_column = ref
             found_row = next((i for i, s in enumerate(model.students) if s.id == student_id), -1)
-            found_column = model.column_of(lesson_id)
+            found_column = model.column_index(grid_column)
             if found_row >= 0 and found_column >= 0:
                 row, column = found_row, found_column
         self.grid_view.select_cell(row, column)
@@ -487,7 +522,8 @@ class JournalsPage(QWidget):
 
     def _highlight_column(self, column: int) -> None:
         model = self.grid_view.grid_model
-        self.lesson_panel.select_lesson(model.lessons[column].id if 0 <= column < len(model.lessons) else None)
+        lesson = model.lesson_at(column) if 0 <= column < len(model.columns) else None
+        self.lesson_panel.select_lesson(lesson.id if lesson else None)
 
     def _on_grid_column_changed(self, current, _previous) -> None:
         """Навігація в таблиці переміщує підсвітку в панелі (сигналів панель не надсилає)."""
@@ -516,10 +552,96 @@ class JournalsPage(QWidget):
     def _save_cell(
         self, student_id: int, lesson_id: int, attendance: AttendanceCode, grade: int | None, comment: str | None
     ) -> tuple[bool, CellInfo | None]:
+        journal_id = self._journal_id
+
+        def action(api: JournalApi) -> tuple[CellInfo | None, dict[ComputedKey, ComputedCell]]:
+            cell = api.set_cell(self.teacher_id, lesson_id, student_id, attendance, grade, comment)
+            return cell, api.student_computed(self.teacher_id, journal_id, student_id)
+
+        ok, result = self._call(action, banner=True)
+        if not ok:
+            return False, None
+        cell, computed = result
+        # Тематичні, семестрова й річна учня могли змінитися — оновлюємо його рядок.
+        self.grid_view.grid_model.apply_computed(student_id, computed)
+        return True, cell
+
+    def _save_override(
+        self, student_id: int, key: ComputedKey, grade: int | None, na: bool
+    ) -> tuple[bool, dict[ComputedKey, ComputedCell] | None]:
+        journal_id = self._journal_id
         return self._call(
-            lambda api: api.set_cell(self.teacher_id, lesson_id, student_id, attendance, grade, comment),
-            banner=True,
+            lambda api: api.set_override(self.teacher_id, journal_id, student_id, key, grade, na), banner=True
         )
+
+    # --- стовпчики без дати («Тематична», «Зошит») ---
+
+    def add_column(self, kind: ExtraColumnKind) -> None:
+        """Ctrl+T / Ctrl+Shift+T / меню: стовпчик після останнього уроку відкритого семестру, без діалогу."""
+        if self._grid is None or self.stack.currentIndex() != 1:
+            return
+        self.grid_view.flush_pending()
+        lessons = self.grid_view.grid_model.lessons
+        if not lessons:
+            self.show_banner("Спершу додайте урок у цьому семестрі")
+            return
+        journal_id, last_id = self._journal_id, lessons[-1].id
+        ok, info = self._call(lambda api: api.create_column(self.teacher_id, journal_id, kind, last_id), banner=True)
+        if ok:
+            self.reload_grid(select_column=GridColumn(info.kind, info.id))
+            self.grid_view.setFocus()
+
+    def _on_move_column(self, column_id: int) -> None:
+        self.grid_view.flush_pending()
+        model = self.grid_view.grid_model
+        extra = model.extras.get(column_id)
+        lessons = model.lessons
+        if extra is None or not lessons:
+            return
+        items = [
+            f"{lesson.number or i}. {lesson.lesson_date:%d.%m}" + (f" · {lesson.topic}" if lesson.topic else "")
+            for i, lesson in enumerate(lessons, start=1)
+        ]
+        # Нинішнє місце — останній урок, що йде перед стовпчиком (за прихованою датою).
+        current = max((i for i, lesson in enumerate(lessons) if lesson.lesson_date <= extra.after_date), default=0)
+        name = "тематичну" if extra.kind == "thematic" else "«Зошит»"
+        chosen, accepted = QInputDialog.getItem(
+            self, "Перемістити стовпчик", f"Після якого уроку поставити {name}?", items, current, False
+        )
+        if not accepted or chosen not in items:
+            return
+        after_id = lessons[items.index(chosen)].id
+        ok, _ = self._call(lambda api: api.move_column(self.teacher_id, column_id, after_id), banner=True)
+        if ok:
+            self.reload_grid(select_column=GridColumn(extra.kind, column_id))
+
+    def _on_delete_column(self, column_id: int) -> None:
+        self.grid_view.flush_pending()
+        model = self.grid_view.grid_model
+        extra = model.extras.get(column_id)
+        if extra is None:
+            return
+        if extra.kind == "notebook":
+            # «Зошит» з оцінками не видаляється: причину (з кількістю) каже сервіс.
+            graded = sum(1 for (_, key), c in model.computed.items() if key == ("notebook", column_id) and c.value)
+            if max(extra.grade_count, graded) == 0 and not self._confirm(
+                f"Видалити стовпчик «Зошит» № {extra.ordinal}?", "Видалити"
+            ):
+                return
+            ok, _ = self._call(lambda api: api.delete_column(self.teacher_id, column_id), banner=True, inform=True)
+        else:
+            if not self._confirm(
+                f"Видалити тематичну № {extra.ordinal}? Оцінки, виставлені в ній вручну, зникнуть.", "Видалити"
+            ):
+                return
+            ok, _ = self._call(lambda api: api.delete_column(self.teacher_id, column_id), banner=True)
+        if ok:
+            self.reload_grid()
+
+    def _on_homework_edited(self, lesson_id: int, text: str) -> None:
+        """Д/з з панелі: зберігаємо; після будь-якого результату панель наповнюється заново (відкат при помилці)."""
+        self._call(lambda api: api.set_homework(self.teacher_id, lesson_id, text), banner=True)
+        self.reload_grid()
 
     # --- уроки ---
 
@@ -567,13 +689,12 @@ class JournalsPage(QWidget):
         # Кількість позначок рахуємо за поточною таблицею, а не за даними останнього
         # завантаження: оцінки, щойно введені з клавіатури, теж мають захищати урок.
         live_count = sum(1 for (_, lid) in self.grid_view.grid_model.cells if lid == lesson_id)
-        lesson = replace(lesson, entry_count=max(lesson.entry_count, live_count))
-        if lesson.entry_count == 0:
-            if not self._confirm(f"Видалити урок {lesson.lesson_date:%d.%m.%Y}?", "Видалити"):
-                return
-        elif DeleteLessonDialog(lesson, parent=self).exec() != QDialog.DialogCode.Accepted:
+        # Урок з відмітками не видаляється (рішення викладачки): причину каже сервіс — показуємо її як є.
+        if max(lesson.entry_count, live_count) == 0 and not self._confirm(
+            f"Видалити урок {lesson.lesson_date:%d.%m.%Y}?", "Видалити"
+        ):
             return
-        ok, _ = self._call(lambda api: api.delete_lesson(self.teacher_id, lesson_id), banner=True)
+        ok, _ = self._call(lambda api: api.delete_lesson(self.teacher_id, lesson_id), banner=True, inform=True)
         if ok:
             self.reload_grid()
 

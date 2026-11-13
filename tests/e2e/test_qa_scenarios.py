@@ -411,9 +411,12 @@ def test_s2_lesson_panel(window, teacher, session, drive, qtbot, msgs):
     assert journals._semester == 2
     _, cells = grid_cells(session, tid, jid)
     assert cells[(journals.grid_view.grid_model.students[0].id, l1.id)].grade == 1
+    # Нумерація наскрізна за навчальний рік (рішення викладачки, етап 6): II семестр продовжує I.
+    first_number = int(panel_rows(panel)[0][0])
+    assert first_number > 1
     assert panel_rows(panel) == [
-        ("1", "13.01", "Нова чверть"),
-        ("2", "10.02", "Лабораторна робота: Практична"),
+        (str(first_number), "13.01", "Нова чверть"),
+        (str(first_number + 1), "10.02", "Лабораторна робота: Практична"),
     ]
     journals.semester_buttons[1].click()
 
@@ -437,16 +440,21 @@ def test_s2_lesson_panel(window, teacher, session, drive, qtbot, msgs):
     header = journals.grid_view.grid_model.headerData(2, Qt.Orientation.Horizontal)
     assert header == "16.09\nКР"
 
-    # --- видалення уроку з оцінками: Esc нічого не робить, неповне слово не вмикає кнопку, слово видаляє ---
-    run = drive(lambda dlg: QTest.keyClick(dlg, Qt.Key.Key_Escape))
+    # --- урок з оцінками не видаляється (рішення викладачки, етап 6): пояснення, урок лишається ---
+    msgs.clear()
     panel.lesson_delete_requested.emit(l2.id)
-    run.check()
+    assert any(kind == "information" and "не можна видалити" in text for kind, _, text in msgs), msgs
     assert any(x.id == l2.id for x in grid_cells(session, tid, jid)[0].lessons)
 
-    run = drive(typed_confirm("видалити"))
+    # після очищення клітинок урок стає порожнім і видаляється звичайним підтвердженням
+    service = JournalService(session)
+    for (sid, lid) in list(grid_cells(session, tid, jid)[1]):
+        if lid == l2.id:
+            service.set_cell(tid, l2.id, sid, "present", None, None)
+    journals.reload_grid()
+    run = drive(confirm_with("Видалити"))
     panel.lesson_delete_requested.emit(l2.id)
     run.check()
-    assert isinstance(run.seen, DeleteLessonDialog)
     grid, cells = grid_cells(session, tid, jid)
     assert l2.id not in [x.id for x in grid.lessons]
     assert session.scalar(select(func.count()).select_from(LessonEntry).where(LessonEntry.lesson_id == l2.id)) == 0
@@ -475,10 +483,12 @@ def test_s2_lesson_panel(window, teacher, session, drive, qtbot, msgs):
     journals._on_edit_lesson(l1.id)
     run.check()
     assert journals._semester == 2, "після перенесення відкрито семестр, куди потрапив урок"
+    # наскрізна нумерація за рік: номери ІІ семестру продовжують І
+    first = int(panel_rows(panel)[0][0])
     assert panel_rows(panel) == [
-        ("1", "13.01", "Нова чверть"),
-        ("2", "20.01", "Повторення"),
-        ("3", "10.02", "Лабораторна робота: Практична"),
+        (str(first), "13.01", "Нова чверть"),
+        (str(first + 1), "20.01", "Повторення"),
+        (str(first + 2), "10.02", "Лабораторна робота: Практична"),
     ]
     assert panel.selected_lesson_id() == l1.id
     journals.semester_buttons[1].click()
@@ -781,7 +791,7 @@ def test_s5_rollover_flow(window, teacher, session, drive, qtbot, msgs):
         assert [line.text() for line in dlg.lines] == [
             "9-А → 10-А (2027-2028), учнів: 4",
             "10-Б → 11-Б (2027-2028), учнів: 3",
-            "11-Б → архів",
+            "11-Б → 12-Б (2027-2028), учнів: 2",  # останній клас — 12-й (рішення викладачки)
         ]
         assert not dlg.copy_check.isHidden() and not dlg.copy_check.isChecked(), "галочка за замовчуванням вимкнена"
         assert dlg.ok_button.isDefault()
@@ -805,7 +815,7 @@ def test_s5_rollover_flow(window, teacher, session, drive, qtbot, msgs):
     rows = classes_of(session, tid)
     assert sorted(rows) == sorted([
         ("9-А", YEAR, True, 4), ("10-Б", YEAR, True, 3), ("11-Б", YEAR, True, 2),
-        ("10-А", "2027-2028", False, 4), ("11-Б", "2027-2028", False, 3),
+        ("10-А", "2027-2028", False, 4), ("11-Б", "2027-2028", False, 3), ("12-Б", "2027-2028", False, 2),
     ])
     new_10a = next(c for c in ClassService(session).list_classes(tid) if c.name == "10-А")
     new_students = ClassService(session).list_students(tid, new_10a.id)
@@ -818,18 +828,19 @@ def test_s5_rollover_flow(window, teacher, session, drive, qtbot, msgs):
     assert by_class == {
         "10-А": [("Алгебра", 0, DEFAULT_BOUNDARIES), ("Геометрія", 0, DEFAULT_BOUNDARIES)],
         "11-Б": [("Фізика", 0, DEFAULT_BOUNDARIES)],
+        "12-Б": [("Математика", 0, DEFAULT_BOUNDARIES)],  # 11-Б → 12-Б (етап 6)
     }, "журнали скопійовано порожніми"
     old = service.get_grid(tid, alg.id, 1)
     assert old.journal.class_archived and len(old.lessons) == 1 and len(old.cells) == 1, "старий журнал без змін"
 
     # сторінки оновились: «Класи» — список нових класів, «Журнали» — відкритий журнал уже з позначкою архіву
     assert classes.stack.currentIndex() == 0
-    assert sorted(card_title(c) for c in classes_cards(classes)) == ["10-А", "11-Б"]
+    assert sorted(card_title(c) for c in classes_cards(classes)) == ["10-А", "11-Б", "12-Б"]
     assert journals.stack.currentIndex() == 1
     assert journals.subtitle_label.text() == f"{YEAR} · клас в архіві"
     journals.show_list()
     assert sorted(card_title(c) for c in journal_cards(journals)) == [
-        "10-А · Алгебра", "10-А · Геометрія", "11-Б · Фізика",
+        "10-А · Алгебра", "10-А · Геометрія", "11-Б · Фізика", "12-Б · Математика",
     ]
 
     # --- повторний запуск: пропонувати нічого, вікна немає ---
@@ -860,7 +871,7 @@ def rollover_edge_classes(window, session, drive, msgs):
     def agree_with_enter(dlg):
         texts = sorted(line.text() for line in dlg.lines)
         assert "9-Б → архів (10-Б уже існує)" in texts
-        assert "11-Б → архів" in texts and "Гурток → архів" in texts and f"{long_name} → архів" in texts
+        assert "11-Б → 12-Б (2027-2028), учнів: 2" in texts and "Гурток → архів" in texts and f"{long_name} → архів" in texts
         promoted = [t for t in texts if "→ 10-А (2027-2028)" in t]
         duplicated = [t for t in texts if t.endswith("→ архів (10-А уже існує)")]
         assert len(promoted) == 1 and len(duplicated) == 1, texts
@@ -875,7 +886,7 @@ def rollover_edge_classes(window, session, drive, msgs):
     names_2026 = {(n, a) for n, y, a, _ in rows if y == YEAR}
     assert names_2026 == {("9-А", True), ("09-А", True), ("9-Б", True), ("11-Б", True), ("Гурток", True), (long_name, True)}
     new_rows = [(n, a) for n, y, a, _ in rows if y == "2027-2028"]
-    assert sorted(new_rows) == [("10-А", False), ("10-Б", False)], "жодних зайвих класів (12-Б, 10-Гурток…) не створено"
+    assert sorted(new_rows) == [("10-А", False), ("10-Б", False), ("12-Б", False)], "жодних зайвих класів (10-Гурток…) не створено"
     assert [c for c in rows if c[0] == "10-Б" and c[1] == "2027-2028"][0][3] == 2, "існуючий 10-Б не чіпали"
     assert existing.id
     assert maybe_run_rollover(window, tid, AUG_1, dialog_factory=never_dialog) is False
@@ -1156,7 +1167,7 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
         "StudentDialog": (StudentDialog(tid, c9.id), ["поле «Коваленко Олена»", "кнопка «Додати ще»", "кнопка «Додати»"]),
         "LessonDialog": (
             LessonDialog(tid, factory, alg.id),
-            ["дата", "список", "поле «необов'язково»", "кнопка «Створити»"],
+            ["дата", "список", "поле «необов'язково»", "текст", "кнопка «Створити»"],  # + д/з (етап 6)
         ),
         "NewJournalDialog": (NewJournalDialog(tid, factory), ["список", "список", "кнопка «Створити»"]),
         "JournalSettingsDialog": (

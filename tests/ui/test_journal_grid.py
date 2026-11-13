@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QMessageBox
 
 from journal.services.class_service import default_school_year
 from journal.services.journal_types import (
@@ -14,7 +14,6 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.ui import journal_dialogs, journals_page
-from journal.ui.journal_dialogs import DeleteLessonDialog
 from journal.ui.journal_grid import header_text
 from tests.fakes.fake_journal_service import FakeJournalService
 from tests.ui.conftest import type_text
@@ -48,11 +47,13 @@ def test_header_text_for_each_lesson_type():
     assert header_text(LessonInfo(1, d, 1, "test", None, 0)) == "02.09\nКР"
     assert header_text(LessonInfo(1, d, 1, "lab", None, 0)) == "02.09\nЛР"
     assert header_text(LessonInfo(1, d, 1, "independent", None, 0)) == "02.09\nСР"
+    assert header_text(LessonInfo(1, d, 1, "quiz", None, 0)) == "02.09\nТ"
+    assert header_text(LessonInfo(1, d, 1, "project", None, 0)) == "02.09\nПр"
 
 
 def test_grid_layout(page):
     model = page.grid_view.grid_model
-    assert model.rowCount() == 3 and model.columnCount() == 2
+    assert model.rowCount() == 3 and model.columnCount() == 3  # 2 уроки + «Сем.»
     assert model.headerData(0, Qt.Orientation.Vertical) == "1. Коваленко Олена"
     assert model.headerData(1, Qt.Orientation.Horizontal) == "09.09\nКР"
     tip = model.headerData(1, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
@@ -217,7 +218,10 @@ def test_tab_and_backtab_move_sideways_and_stop_at_edges(page, qtbot):
     view.select_cell(0, 0)
     qtbot.keyClick(view, Qt.Key.Key_Tab)
     assert view.currentIndex().column() == 1
+    qtbot.keyClick(view, Qt.Key.Key_Tab)  # третій стовпець — «Сем.»
     qtbot.keyClick(view, Qt.Key.Key_Tab)
+    assert view.currentIndex().column() == 2
+    qtbot.keyClick(view, Qt.Key.Key_Backtab)
     assert view.currentIndex().column() == 1
     qtbot.keyClick(view, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
     assert view.currentIndex().column() == 0
@@ -314,7 +318,7 @@ def test_ctrl_n_works_when_no_lessons_yet(make_page):
     assert page.content_stack.currentIndex() == 1
     page.new_lesson_today()
     assert page.content_stack.currentIndex() == 0
-    assert page.grid_view.grid_model.columnCount() == 1
+    assert page.grid_view.grid_model.columnCount() == 2  # 1 урок + «Сем.»
 
 
 def test_ctrl_n_error_shows_banner(page, fake):
@@ -327,34 +331,19 @@ def test_delete_lesson_without_marks_uses_simple_confirm(page, fake, monkeypatch
     monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
     page._on_delete_lesson(L1)
     assert fake.calls_of("delete_lesson") == [("delete_lesson", L1)]
-    assert page.grid_view.grid_model.columnCount() == 1
+    assert page.grid_view.grid_model.columnCount() == 2  # 1 урок + «Сем.»
 
 
-def test_delete_lesson_with_marks_needs_typed_word(page, fake, monkeypatch):
+def test_delete_lesson_with_marks_is_refused_with_service_text(page, fake, monkeypatch):
+    """Правило E: урок із відмітками не видаляється; причину (текст сервісу) показано інформаційним вікном."""
     fake.put_cell(S1, L1, "present", 5)
     page.reload_grid()
-    shown = {}
-
-    def fake_exec(self):
-        shown["initially"] = self.delete_button.isEnabled()
-        self.confirm_edit.setText("щось інше")
-        shown["wrong"] = self.delete_button.isEnabled()
-        self.confirm_edit.setText("Видалити")
-        shown["ok"] = self.delete_button.isEnabled()
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(DeleteLessonDialog, "exec", fake_exec)
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text, *a: shown.append(text))
+    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("підтвердження замість відмови"))
     page._on_delete_lesson(L1)
-    assert shown == {"initially": False, "wrong": False, "ok": True}
-    assert fake.calls_of("delete_lesson") == [("delete_lesson", L1)]
-
-
-def test_delete_lesson_with_marks_cancelled(page, fake, monkeypatch):
-    fake.put_cell(S1, L1, "present", 5)
-    page.reload_grid()
-    monkeypatch.setattr(DeleteLessonDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
-    page._on_delete_lesson(L1)
-    assert fake.calls_of("delete_lesson") == []
+    assert len(shown) == 1 and "Урок має оцінки чи позначки (1)" in shown[0] and "Спершу очистьте" in shown[0]
+    assert page.grid_view.grid_model.column_of(L1) >= 0  # урок лишився в таблиці
 
 
 def test_edit_lesson_dialog(page, qtbot):
@@ -430,9 +419,8 @@ def test_ui_does_not_import_forbidden_layers():
             assert bad not in text, (name, bad)
 
 
-def test_delete_lesson_with_fresh_keyboard_marks_needs_typed_word(page, fake, monkeypatch):
-    """Регресія (рецензія Fable, PR #9): оцінки, введені щойно без перезавантаження,
-    теж вмикають підтвердження словом «видалити» — інакше урок зник би разом з ними."""
+def test_delete_lesson_with_fresh_keyboard_marks_is_refused(page, fake, monkeypatch):
+    """Оцінки, введені щойно без перезавантаження, теж захищають урок (простого підтвердження немає)."""
     view = page.grid_view
     column = view.grid_model.column_of(L1)
     view.setCurrentIndex(view.grid_model.index(0, column))
@@ -440,17 +428,12 @@ def test_delete_lesson_with_fresh_keyboard_marks_needs_typed_word(page, fake, mo
     view.setCurrentIndex(view.grid_model.index(1, column))
     type_text(view, "н")
     assert len(fake.calls_of("set_cell")) == 2
-    shown = {}
-
-    def fake_exec(self):
-        shown["count"] = self.lesson.entry_count
-        return QDialog.DialogCode.Rejected
-
-    monkeypatch.setattr(DeleteLessonDialog, "exec", fake_exec)
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("простий діалог замість захищеного"))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text, *a: shown.append(text))
+    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("простий діалог замість відмови"))
     page._on_delete_lesson(L1)  # без reload_grid()
-    assert shown == {"count": 2}
-    assert fake.calls_of("delete_lesson") == []
+    assert len(shown) == 1 and "(2)" in shown[0]
+    assert len(fake.calls_of("delete_lesson")) == 1  # відмову дає сервіс, а не інтерфейс
 
 
 def test_returning_to_journals_page_refreshes_open_grid(page, fake):
