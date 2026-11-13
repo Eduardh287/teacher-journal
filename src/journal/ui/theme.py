@@ -4,11 +4,14 @@
 у який підставляються токени активної теми. Щоб змінити колір у всьому
 застосунку, достатньо поправити одне значення тут.
 """
+from pathlib import Path
 from string import Template
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QDir, QSettings, QStandardPaths, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
+
+from journal.ui import icons
 
 THEMES = ("light", "dark")
 DEFAULT_THEME = "light"
@@ -19,17 +22,19 @@ TOKENS: dict[str, dict[str, str]] = {
         "surface": "#FFFFFF",     # картки, бічна панель
         "hover": "#F2F4F7",       # наведення
         "border": "#E4E7EC",
+        "control_border": "#7F8799",  # рамки полів, кнопок, прапорців (≥3:1)
+        "disabled": "#98A2B3",    # текст вимкнених елементів
         "text": "#101828",
-        "muted": "#667085",       # другорядний текст
+        "muted": "#5B667A",       # другорядний текст
         "input_bg": "#FFFFFF",
         "accent": "#4F46E5",      # індиго
         "accent_hover": "#4338CA",
         "accent_soft": "#EEF2FF",
         "accent_text": "#FFFFFF",
-        "danger": "#D92D20",
+        "danger": "#B42318",
         "danger_soft": "#FEF3F2",
         # Позначки в таблиці журналу (етап 5)
-        "mark_absent": "#D92D20",
+        "mark_absent": "#B42318",
         "mark_absent_soft": "#FEE4E2",
         "mark_sick": "#B54708",
         "mark_sick_soft": "#FEF0C7",
@@ -44,6 +49,8 @@ TOKENS: dict[str, dict[str, str]] = {
         "surface": "#171A23",
         "hover": "#1F2330",
         "border": "#2A2F3C",
+        "control_border": "#6B7389",
+        "disabled": "#5F677B",
         "text": "#E6E8EE",
         "muted": "#9AA1B2",
         "input_bg": "#1D212C",
@@ -101,19 +108,36 @@ QLabel#CardBig { font-size: 16pt; font-weight: 600; background: transparent; }
 QLabel#Badge { background: $accent_soft; color: $accent; border-radius: 6px; padding: 2px 8px; font-size: 9pt; font-weight: 600; }
 
 /* Поля вводу */
-QLineEdit, QComboBox, QPlainTextEdit {
-    background: $input_bg; border: 1px solid $border; border-radius: 8px;
+QLineEdit, QComboBox, QPlainTextEdit, QDateEdit {
+    background: $input_bg; border: 1px solid $control_border; border-radius: 8px;
     padding: 8px 10px; selection-background-color: $accent; selection-color: $accent_text;
 }
-QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border: 1px solid $accent; }
-QComboBox::drop-down { border: none; width: 26px; background: transparent; }
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDateEdit:focus { border: 1px solid $accent; }
+QLineEdit:disabled, QComboBox:disabled, QPlainTextEdit:disabled, QDateEdit:disabled {
+    color: $disabled; background: $bg; border: 1px dashed $border;
+}
+QComboBox::drop-down, QDateEdit::drop-down { border: none; width: 26px; background: transparent; }
 QComboBox QAbstractItemView {
     background: $surface; color: $text; border: 1px solid $border; outline: 0;
     selection-background-color: $accent_soft; selection-color: $text;
 }
 
-/* Прапорець */
+/* Прапорець (рисунок позначки — в IMAGES_QSS) */
 QCheckBox { spacing: 8px; }
+QCheckBox::indicator {
+    width: 16px; height: 16px; border-radius: 4px;
+    border: 1px solid $control_border; background: $input_bg;
+}
+QCheckBox::indicator:checked { background: $accent; border: 1px solid $accent; }
+QCheckBox::indicator:disabled { border: 1px dashed $border; background: $bg; }
+QCheckBox:disabled { color: $disabled; }
+
+/* Контекстні меню */
+QMenu { background: $surface; color: $text; border: 1px solid $border; padding: 4px; }
+QMenu::item { padding: 6px 24px; border-radius: 6px; }
+QMenu::item:selected { background: $accent_soft; color: $text; }
+QMenu::item:disabled { color: $disabled; background: transparent; }
+QMenu::separator { height: 1px; background: $border; margin: 4px 8px; }
 
 /* Таблиця учнів */
 QTableWidget, QTableView {
@@ -149,7 +173,7 @@ QScrollArea > QWidget > QWidget { background: transparent; }
 
 /* Кнопки */
 QPushButton {
-    background: $surface; border: 1px solid $border; border-radius: 8px; padding: 8px 16px;
+    background: $surface; border: 1px solid $control_border; border-radius: 8px; padding: 8px 16px;
 }
 QPushButton:hover { background: $hover; }
 QPushButton:disabled { color: $muted; background: $bg; border: 1px dashed $border; }
@@ -164,7 +188,18 @@ QPushButton[segment="true"]:checked { background: $accent_soft; color: $accent; 
 /* Смуги прокрутки */
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar::handle:vertical { background: $border; border-radius: 4px; min-height: 30px; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle:horizontal { background: $border; border-radius: 4px; min-width: 30px; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+"""
+)
+
+# Правила з рисунками: шляхи до PNG підставляються під час застосування теми.
+IMAGES_QSS = Template(
+    r"""
+QComboBox::down-arrow, QDateEdit::down-arrow { image: url("$chevron"); width: 14px; height: 14px; }
+QCheckBox::indicator:checked { image: url("$check"); }
 """
 )
 
@@ -214,7 +249,43 @@ def _palette(t: dict[str, str]) -> QPalette:
     }
     for role, value in roles.items():
         p.setColor(role, QColor(value))
+    for role in (
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.ButtonText,
+    ):
+        p.setColor(QPalette.ColorGroup.Disabled, role, QColor(t["disabled"]))
     return p
+
+
+def _image_dirs() -> list[Path]:
+    """Куди класти PNG для QSS: спочатку тимчасова тека, потім локальні дані застосунку."""
+    return [
+        Path(QDir.tempPath()) / "teacher-journal",
+        Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
+        / "images",
+    ]
+
+
+def _render_images(name: str, tokens: dict[str, str]) -> dict[str, str]:
+    """Малює стрілку списку й галочку кольорами теми; повертає шляхи (з «/») для QSS."""
+    images = {
+        "chevron": (f"chevron-{name}.png", icons.pixmap("chevron-down", tokens["muted"], size=14)),
+        "check": (f"check-{name}.png", icons.pixmap("check", tokens["accent_text"], size=12, stroke=3.0)),
+    }
+    for directory in _image_dirs():
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            result = {}
+            for key, (filename, pixmap) in images.items():
+                path = directory / filename
+                if not pixmap.save(str(path), "PNG"):
+                    raise OSError(str(path))
+                result[key] = path.resolve().as_posix()
+            return result
+        except OSError:
+            continue
+    return {"chevron": "", "check": ""}
 
 
 def apply_theme(app: QApplication, name: str) -> None:
@@ -229,4 +300,5 @@ def apply_theme(app: QApplication, name: str) -> None:
         Qt.ColorScheme.Dark if name == "dark" else Qt.ColorScheme.Light
     )
     app.setPalette(_palette(tokens))
-    app.setStyleSheet(STYLESHEET.substitute(tokens))
+    sheet = STYLESHEET.substitute(tokens) + IMAGES_QSS.substitute(_render_images(name, tokens))
+    app.setStyleSheet(sheet)

@@ -45,7 +45,7 @@ from journal.ui import icons, theme
 from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
-from journal.ui.widgets import button, card, label
+from journal.ui.widgets import ElidedLabel, button, card, label
 
 COLUMNS = 3  # кількість карток у рядку
 PANEL_WIDTH = 340  # початкова ширина панелі уроків
@@ -92,8 +92,9 @@ class _JournalCard(QFrame):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(4)
         top = QHBoxLayout()
-        top.addWidget(label(f"{info.class_name} · {info.subject_name}", object_name="CardBig"))
-        top.addStretch(1)
+        title = ElidedLabel(f"{info.class_name} · {info.subject_name}")
+        title.setObjectName("CardBig")
+        top.addWidget(title, 1)
         if info.class_archived:
             top.addWidget(label("Архів", object_name="Badge"), alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(top)
@@ -101,6 +102,8 @@ class _JournalCard(QFrame):
         layout.addStretch(1)
         layout.addWidget(label(lessons_text(info.lesson_count)))
         for child in self.findChildren(QLabel):
+            if isinstance(child, ElidedLabel):
+                continue  # підказка потрібна самій мітці
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -206,6 +209,7 @@ class JournalsPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.viewport().setAutoFillBackground(False)
         self.list_stack.addWidget(self.scroll)                    # 0 — картки
         self.list_stack.addWidget(self._build_empty_journals())   # 1 — порожньо
@@ -324,6 +328,7 @@ class JournalsPage(QWidget):
         self.settings_action.triggered.connect(self._on_journal_settings)
         self.delete_journal_action = menu.addAction("Видалити журнал")
         self.delete_journal_action.triggered.connect(self._on_delete_journal)
+        menu.setToolTipsVisible(True)
         self.menu_btn.setMenu(menu)
         bar.addWidget(self.menu_btn)
         layout.addLayout(bar)
@@ -377,6 +382,10 @@ class JournalsPage(QWidget):
         self.empty_label = label("", object_name="EmptyTitle")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.empty_label)
+        self.empty_hint = label("Додайте учнів на сторінці «Класи».", muted=True)
+        self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_hint.hide()
+        layout.addWidget(self.empty_hint)
         self.empty_lesson_btn = button("Новий урок", variant="primary")
         self.empty_lesson_btn.clicked.connect(self._on_new_lesson)
         layout.addWidget(self.empty_lesson_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -431,13 +440,18 @@ class JournalsPage(QWidget):
         self.new_lesson_btn.setVisible(True)
         self.new_lesson_shortcut.setEnabled(True)
         self.delete_journal_action.setEnabled(not info.class_archived)
+        self.delete_journal_action.setToolTip(
+            "Журнал архівного класу не можна видалити" if info.class_archived else ""
+        )
 
         if not grid.students:
             self.empty_label.setText("У класі немає учнів")
             self.empty_lesson_btn.hide()
+            self.empty_hint.show()
         elif not grid.lessons:
             self.empty_label.setText("Уроків у цьому семестрі ще немає")
             self.empty_lesson_btn.setVisible(True)
+            self.empty_hint.hide()
         self.content_stack.setCurrentIndex(0 if grid.students and grid.lessons else 1)
         if select_lesson_id is not None:
             column = self.grid_view.grid_model.column_of(select_lesson_id)

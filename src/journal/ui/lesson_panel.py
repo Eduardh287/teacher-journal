@@ -90,6 +90,9 @@ class LessonPanel(QWidget):
         self.table = QTableWidget(0, 3)
         self.table.setObjectName("LessonTable")
         self.table.setHorizontalHeaderLabels(["№", "Дата", "Тема"])
+        self.table.horizontalHeaderItem(2).setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self.table.verticalHeader().hide()
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
