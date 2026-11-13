@@ -27,6 +27,7 @@ from journal.services.journal_types import (
     JournalApi,
     JournalCandidate,
     JournalError,
+    ExtraColumnInfo,
     JournalInfo,
     LessonInfo,
     LessonTypeCode,
@@ -40,6 +41,8 @@ ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
 SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
 DELETE_WORD = "видалити"
+DATELESS_HINT = "Для «Тематичної» і «Зошита» дата, тема й д/з не вказуються"
+NO_LESSONS_TEXT = "Спершу створіть урок у цьому семестрі"
 
 # Тип уроку: код -> (назва, скорочення в заголовку стовпця)
 LESSON_TYPES: dict[str, tuple[str, str]] = {
@@ -172,11 +175,16 @@ class LessonDialog(_ApiDialog):
         parent: QWidget | None = None,
         *,
         focus_topic: bool = False,
+        after_lesson_id: int | None = None,
     ) -> None:
         super().__init__("Редагування уроку" if lesson else "Новий урок", teacher_id, api_factory, parent)
         self.journal_id = journal_id
         self.lesson = lesson
+        # Останній урок відкритого семестру: після нього ставиться «Тематична»/«Зошит».
+        self.after_lesson_id = after_lesson_id
+        self._saved_inputs: tuple | None = None
         self.result_info: LessonInfo | None = None
+        self.result_column: ExtraColumnInfo | None = None
 
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
@@ -197,6 +205,11 @@ class LessonDialog(_ApiDialog):
             self.type_combo.addItem(name, code)
         if lesson:
             self.type_combo.setCurrentIndex(self.type_combo.findData(lesson.lesson_type))
+        else:  # стовпчики без дати — лише при створенні, після розділювача
+            self.type_combo.insertSeparator(self.type_combo.count())
+            for code, (name, _abbr) in EXTRA_COLUMN_TYPES.items():
+                self.type_combo.addItem(name, code)
+            self.type_combo.currentIndexChanged.connect(self._on_type_changed)
 
         self.topic_edit = QLineEdit()
         self.topic_edit.setPlaceholderText("необов'язково")
@@ -216,6 +229,9 @@ class LessonDialog(_ApiDialog):
 
         self.body.addWidget(field("ТЕМА", self.topic_edit))
         self.body.addWidget(field("ДОМАШНЄ ЗАВДАННЯ", self.homework_edit))
+        self.dateless_hint = label(DATELESS_HINT, muted=True, wrap=True)
+        self.dateless_hint.hide()
+        self.body.addWidget(self.dateless_hint)
         self.body.addWidget(self.error_label)
         submit = button("Зберегти" if lesson else "Створити", variant="primary")
         submit.setDefault(True)
@@ -226,6 +242,29 @@ class LessonDialog(_ApiDialog):
             self.topic_edit.setFocus()
             self.topic_edit.selectAll()
 
+    def is_dateless(self) -> bool:
+        return self.type_combo.currentData() in EXTRA_COLUMN_TYPES
+
+    def _on_type_changed(self) -> None:
+        """«Тематична»/«Зошит»: дата, тема й д/з не вводяться (порожні й сірі); повернення до уроку — знову доступні."""
+        dateless = self.is_dateless()
+        if dateless:
+            self._saved_inputs = (
+                self.date_edit.date(), self.topic_edit.text(), self.homework_edit.toPlainText()
+            )
+            self.topic_edit.clear()
+            self.homework_edit.clear()
+        elif getattr(self, "_saved_inputs", None) is not None:
+            qd, topic, homework = self._saved_inputs
+            self.date_edit.setDate(qd)
+            self.topic_edit.setText(topic)
+            self.homework_edit.setPlainText(homework)
+            self._saved_inputs = None
+        for widget in (self.date_edit, self.topic_edit, self.homework_edit):
+            widget.setEnabled(not dateless)
+        self.dateless_hint.setVisible(dateless)
+        self.error_label.hide()
+
     def _limit_homework(self) -> None:
         text = self.homework_edit.toPlainText()
         if len(text) > MAX_HOMEWORK:
@@ -234,7 +273,22 @@ class LessonDialog(_ApiDialog):
             cursor.movePosition(cursor.MoveOperation.End)
             self.homework_edit.setTextCursor(cursor)
 
+    def _submit_column(self, kind: str) -> None:
+        if self.after_lesson_id is None:
+            self.show_error(NO_LESSONS_TEXT)
+            return
+        after_id = self.after_lesson_id
+        ok, info = self.run_service(
+            lambda api: api.create_column(self.teacher_id, self.journal_id, kind, after_id)
+        )
+        if ok:
+            self.result_column = info
+            self.accept()
+
     def _on_submit(self) -> None:
+        if self.lesson is None and self.is_dateless():
+            self._submit_column(self.type_combo.currentData())
+            return
         qd = self.date_edit.date()
         lesson_date = date(qd.year(), qd.month(), qd.day())
         lesson_type: LessonTypeCode = self.type_combo.currentData()

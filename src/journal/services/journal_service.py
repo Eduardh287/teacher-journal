@@ -53,8 +53,11 @@ from journal.services.ua_sort import class_name_key, ukrainian_sort_key
 # Заборонено лише видаляти журнал архівного класу та створювати нові журнали для нього.
 ARCHIVED_WRITE = "Клас в архіві — журнал не можна видалити; спершу поверніть клас"
 COLUMN_EXISTS = "Після цього уроку вже є такий стовпчик"
-# Порядок стовпчиків з однаковою after_date: уроки → «Зошит» → «Тематична».
-_RANK = {"lesson": 0, "notebook": 1, "thematic": 2}
+COLUMN_MOVE_BLOCKED = (
+    "Не можна видалити урок: стовпчик «{kind}» з оцінками мав би стати після попереднього уроку, "
+    "де вже є такий стовпчик. Спершу видаліть або перенесіть його."
+)
+_KIND_NAMES = {"thematic": "Тематична", "notebook": "Зошит"}
 _FINAL_KINDS = {
     ("semester", 1): FinalGradeKind.SEMESTER_1,
     ("semester", 2): FinalGradeKind.SEMESTER_2,
@@ -171,14 +174,10 @@ class JournalService:
         total = self.repo.lesson_counts([journal_id]).get(journal_id, 0)
 
         columns = self.repo.extra_columns(journal_id)
-        infos = _column_infos(columns, self.repo.extra_grade_counts(journal_id))
+        infos = _column_infos(columns, self.repo.extra_grade_counts(journal_id), all_lessons)
         mine = [c for c in columns if c.semester == semester]
-        ordered = sorted(
-            [(x.lesson_date, _RANK["lesson"], x.id, GridColumn("lesson", x.id)) for x in lessons]
-            + [(c.after_date, _RANK[c.kind.value], c.id, GridColumn(c.kind.value, c.id)) for c in mine],
-            key=lambda item: item[:3],
-        )
-        grid_columns = [item[3] for item in ordered] + [GridColumn("semester", None)]
+        ordered = _display_order(all_lessons, lessons, mine)
+        grid_columns = [GridColumn(kind, item.id) for kind, item in ordered] + [GridColumn("semester", None)]
         shown_keys = {("semester", semester)} | {(c.kind.value, c.id) for c in mine}
         if semester == 2:
             grid_columns.append(GridColumn("annual", None))
@@ -244,6 +243,10 @@ class JournalService:
         lesson.lesson_type = new_type
         lesson.topic = new_topic
         lesson.homework = new_homework
+        # Стовпчики, прив'язані до цього уроку, їдуть разом з ним (дата й семестр якоря).
+        for column in self.repo.columns_anchored_to(lesson.id):
+            column.after_date = lesson_date
+            column.semester = semester
         self.repo.session.flush()
         return self._info(lesson, self.repo.entry_count(lesson_id))
 
@@ -267,7 +270,39 @@ class JournalService:
             if withdrawn:  # рядок вибулого лише для перегляду — пояснюємо, як усе ж очистити
                 message += _WITHDRAWN_HINT.format(names=", ".join(withdrawn))
             raise JournalError(message)
+        self._reanchor_columns_of(lesson)
         self.repo.delete(lesson)
+
+    def _reanchor_columns_of(self, lesson: Lesson) -> None:
+        """Стовпчики, прив'язані до видаленого уроку, переходять до ПОПЕРЕДНЬОГО уроку журналу
+        (за порядком таблиці), щоб не «стрибати»; якщо попереднього немає — лишаються без якоря
+        на тій самій даті (after_date не змінюється), тобто на початку."""
+        attached = self.repo.columns_anchored_to(lesson.id)
+        if not attached:
+            return
+        ordered = self.repo.all_lessons(lesson.journal_id)
+        index = next(i for i, x in enumerate(ordered) if x.id == lesson.id)
+        previous = ordered[index - 1] if index else None
+        counts = self.repo.extra_grade_counts(lesson.journal_id)
+        duplicates = set()
+        if previous is not None:
+            for column in attached:
+                if self.repo.find_extra_column(column.journal_id, column.kind, previous.id) is not None:
+                    # Після попереднього уроку вже є стовпчик цього виду: порожній дублікат зникає.
+                    if counts.get(column.id, 0):
+                        raise JournalError(COLUMN_MOVE_BLOCKED.format(kind=_KIND_NAMES[column.kind.value]))
+                    duplicates.add(column.id)
+        for column in attached:
+            if previous is None:
+                column.after_lesson_id = None
+                continue
+            if column.id in duplicates:
+                self.repo.session.delete(column)
+                continue
+            column.after_lesson_id = previous.id
+            column.after_date = previous.lesson_date
+            column.semester = previous.semester
+        self.repo.session.flush()
 
     # --- стовпчики без дати ---
 
@@ -278,10 +313,11 @@ class JournalService:
         journal = self._own_journal(teacher_id, journal_id)
         column_kind = _column_kind(kind)
         anchor = self._anchor(journal, after_lesson_id)
-        if self.repo.find_extra_column(journal.id, column_kind, anchor.lesson_date) is not None:
+        if self.repo.find_extra_column(journal.id, column_kind, anchor.id) is not None:
             raise JournalError(COLUMN_EXISTS)
         column = ExtraColumn(
-            journal_id=journal.id, kind=column_kind, semester=anchor.semester, after_date=anchor.lesson_date
+            journal_id=journal.id, kind=column_kind, semester=anchor.semester,
+            after_date=anchor.lesson_date, after_lesson_id=anchor.id,
         )
         self.repo.add(column)
         return self._column_info(column)
@@ -290,9 +326,10 @@ class JournalService:
         """Переносить стовпчик після іншого уроку (семестр береться з уроку-якоря)."""
         column = self._own_column(teacher_id, column_id)
         anchor = self._anchor(column.journal, after_lesson_id)
-        other = self.repo.find_extra_column(column.journal_id, column.kind, anchor.lesson_date)
+        other = self.repo.find_extra_column(column.journal_id, column.kind, anchor.id)
         if other is not None and other.id != column.id:
             raise JournalError(COLUMN_EXISTS)
+        column.after_lesson_id = anchor.id
         column.after_date = anchor.lesson_date
         column.semester = anchor.semester
         self.repo.session.flush()
@@ -449,7 +486,9 @@ class JournalService:
 
     def _column_info(self, column: ExtraColumn) -> ExtraColumnInfo:
         infos = _column_infos(
-            self.repo.extra_columns(column.journal_id), self.repo.extra_grade_counts(column.journal_id)
+            self.repo.extra_columns(column.journal_id),
+            self.repo.extra_grade_counts(column.journal_id),
+            self.repo.all_lessons(column.journal_id),
         )
         return next(info for info in infos if info.id == column.id)
 
@@ -475,20 +514,22 @@ class JournalService:
         """Обчислювані клітинки (тематичні, зошит, семестрові, річна) для учнів — за один прохід."""
         wanted = set(student_ids)
         lessons = self.repo.all_lessons(journal.id)
-        semester_of = {lesson.id: lesson.semester for lesson in lessons}
-        date_of = {lesson.id: lesson.lesson_date for lesson in lessons}
-        # Оцінки уроків учня: (дата, семестр, оцінка). Лише рядки з оцінкою: н/хв/з і коментарі не рахуються.
-        grades: dict[int, list[tuple[date, int, int]]] = {sid: [] for sid in wanted}
-        for entry in self.repo.entries(list(semester_of)):
+        # Оцінки уроків учня: урок → оцінка. Лише рядки з оцінкою: н/хв/з і коментарі не рахуються.
+        grades: dict[int, dict[int, int]] = {sid: {} for sid in wanted}
+        for entry in self.repo.entries([lesson.id for lesson in lessons]):
             if entry.grade is not None and entry.student_id in wanted:
-                grades[entry.student_id].append(
-                    (date_of[entry.lesson_id], semester_of[entry.lesson_id], entry.grade)
-                )
+                grades[entry.student_id][entry.lesson_id] = entry.grade
         columns = self.repo.extra_columns(journal.id)
         extra = {(g.column_id, g.student_id): g for g in self.repo.extra_grades(journal.id)}
         finals = {(f.student_id, f.kind): f for f in self.repo.final_grades(journal.id)}
-        thematics = {
-            sem: [c for c in columns if c.kind is ExtraColumnKind.THEMATIC and c.semester == sem]
+        # Порядок таблиці в кожному семестрі: тематична підсумовує всі оцінки уроків між попередньою
+        # тематичною («Зошит» — не межа й не рахується) і собою — саме в цьому порядку.
+        sequence = {
+            sem: _display_order(
+                lessons,
+                [x for x in lessons if x.semester == sem],
+                [c for c in columns if c.kind is ExtraColumnKind.THEMATIC and c.semester == sem],
+            )
             for sem in (1, 2)
         }
 
@@ -497,16 +538,16 @@ class JournalService:
             effective: dict[int, int | None] = {}
             for sem in (1, 2):
                 values: list[int | None] = []
-                previous: date | None = None
-                for column in thematics[sem]:
-                    period = [
-                        g for d, s, g in grades[sid]
-                        if s == sem and (previous is None or d > previous) and d <= column.after_date
-                    ]
-                    cell = _cell(grade_calc.thematic(period), extra.get((column.id, sid)))
-                    result[(sid, ("thematic", column.id))] = cell
+                period: list[int] = []
+                for item_kind, item in sequence[sem]:
+                    if item_kind == "lesson":
+                        if item.id in grades[sid]:
+                            period.append(grades[sid][item.id])
+                        continue
+                    cell = _cell(grade_calc.thematic(period), extra.get((item.id, sid)))
+                    result[(sid, ("thematic", item.id))] = cell
                     values.append(cell.value)
-                    previous = column.after_date
+                    period = []
                 kind = FinalGradeKind.SEMESTER_1 if sem == 1 else FinalGradeKind.SEMESTER_2
                 cell = _cell(grade_calc.semester(values), finals.get((sid, kind)))
                 result[(sid, ("semester", sem))] = cell
@@ -541,11 +582,39 @@ def _numbers(lessons: list[Lesson]) -> dict[int, int]:
     return {lesson.id: number for number, lesson in enumerate(ordered, start=1)}
 
 
-def _column_infos(columns: list[ExtraColumn], counts: dict[int, int]) -> list[ExtraColumnInfo]:
-    """ExtraColumnInfo з порядковим номером виду в семестрі (за after_date, id)."""
+def _lesson_key(lesson: Lesson) -> tuple:
+    return (lesson.lesson_date, lesson.id, 0, 0)
+
+
+def _column_key(column: ExtraColumn, by_id: dict[int, Lesson]) -> tuple:
+    """Ключ порядку: стовпчик стоїть одразу після уроку-якоря, а кілька стовпчиків після одного
+    уроку — у порядку створення. Без якоря (NULL) — на дату after_date ПЕРЕД усіма її уроками
+    (id уроків ≥ 1, тож 0 менший за будь-який)."""
+    anchor = by_id.get(column.after_lesson_id) if column.after_lesson_id is not None else None
+    if anchor is not None:
+        return (anchor.lesson_date, anchor.id, 1, column.id)
+    return (column.after_date, 0, 1, column.id)
+
+
+def _display_order(
+    all_lessons: list[Lesson], lessons: list[Lesson], columns: list[ExtraColumn]
+) -> list[tuple[str, Lesson | ExtraColumn]]:
+    """Уроки й стовпчики (kind, об'єкт) у порядку таблиці. all_lessons — для пошуку якорів."""
+    by_id = {x.id: x for x in all_lessons}
+    keyed = [(_lesson_key(x), "lesson", x) for x in lessons]
+    keyed += [(_column_key(c, by_id), c.kind.value, c) for c in columns]
+    keyed.sort(key=lambda item: item[0])
+    return [(kind, item) for _, kind, item in keyed]
+
+
+def _column_infos(
+    columns: list[ExtraColumn], counts: dict[int, int], all_lessons: list[Lesson]
+) -> list[ExtraColumnInfo]:
+    """ExtraColumnInfo з порядковим номером виду в семестрі (у порядку таблиці)."""
+    by_id = {x.id: x for x in all_lessons}
     ordinals: dict[tuple[int, str], int] = {}
     infos = []
-    for column in sorted(columns, key=lambda c: (c.after_date, c.id)):
+    for column in sorted(columns, key=lambda c: _column_key(c, by_id)):
         group = (column.semester, column.kind.value)
         ordinals[group] = ordinals.get(group, 0) + 1
         infos.append(

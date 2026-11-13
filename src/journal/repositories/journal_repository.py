@@ -198,7 +198,14 @@ class JournalRepository:
             self.session.scalars(
                 select(ExtraColumn)
                 .where(ExtraColumn.journal_id == journal_id)
-                .order_by(ExtraColumn.after_date, ExtraColumn.id)
+                .order_by(ExtraColumn.after_date, ExtraColumn.id)  # остаточний порядок задає сервіс
+            )
+        )
+
+    def columns_anchored_to(self, lesson_id: int) -> list[ExtraColumn]:
+        return list(
+            self.session.scalars(
+                select(ExtraColumn).where(ExtraColumn.after_lesson_id == lesson_id).order_by(ExtraColumn.id)
             )
         )
 
@@ -212,12 +219,13 @@ class JournalRepository:
     def get_extra_column(self, column_id: int) -> ExtraColumn | None:
         return self.session.get(ExtraColumn, column_id)
 
-    def find_extra_column(self, journal_id: int, kind, after_date) -> ExtraColumn | None:
+    def find_extra_column(self, journal_id: int, kind, after_lesson_id: int) -> ExtraColumn | None:
+        """Стовпчик виду kind після цього уроку (не більше одного)."""
         return self.session.scalar(
             select(ExtraColumn).where(
                 ExtraColumn.journal_id == journal_id,
                 ExtraColumn.kind == kind,
-                ExtraColumn.after_date == after_date,
+                ExtraColumn.after_lesson_id == after_lesson_id,
             )
         )
 

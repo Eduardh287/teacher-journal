@@ -297,25 +297,45 @@ def test_notebook_ignores_n_and_marks_and_is_not_counted(with_notebook):
     assert text_at(page, R1, col(page, "semester")) == "7"
 
 
-# --- «Додати стовпчик» ---
+# --- створення стовпчиків: діалог «Новий урок» і гарячі клавіші ---
 
-def test_add_column_menu_texts(page):
-    actions = [a.text() for a in page.add_column_btn.menu().actions()]
-    assert actions == ["Тематична\tCtrl+T", "Зошит\tCtrl+Shift+T"]
-    assert page.add_column_btn.text() == "Додати стовпчик"
+def _run_dialog(monkeypatch, kind):
+    """Підміняє модальний exec: вибирає тип у списку й тисне «Створити»."""
+    from journal.ui import journals_page
+    from PySide6.QtWidgets import QDialog
+
+    seen = {}
+
+    class AutoDialog(journals_page.LessonDialog):
+        def exec(self):
+            seen["after"] = self.after_lesson_id
+            self.type_combo.setCurrentIndex(self.type_combo.findData(kind))
+            self._on_submit()
+            seen["error"] = self.error_label.text()
+            return QDialog.DialogCode.Accepted if self.result_column is not None else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(journals_page, "LessonDialog", AutoDialog)
+    return seen
 
 
-def test_add_thematic_after_last_lesson_and_selects_it(page, fake):
+def test_no_add_column_button(page):
+    assert not hasattr(page, "add_column_btn")
+
+
+def test_thematic_via_new_lesson_dialog_selects_it(page, fake, monkeypatch):
+    seen = _run_dialog(monkeypatch, "thematic")
     page.grid_view.select_cell(R2, 0)
-    page.add_thematic_action.trigger()
+    page.new_lesson_btn.click()
+    assert seen["after"] == L2
     assert fake.calls_of("create_column") == [("create_column", 1, "thematic", L2)]
     assert kinds(page) == ["lesson", "lesson", "thematic", "semester"]
     cur = page.grid_view.currentIndex()
     assert cur.column() == 2 and cur.row() == R2
 
 
-def test_add_notebook_via_menu(page, fake):
-    page.add_notebook_action.trigger()
+def test_notebook_via_new_lesson_dialog(page, fake, monkeypatch):
+    _run_dialog(monkeypatch, "notebook")
+    page.new_lesson_btn.click()
     assert fake.calls_of("create_column") == [("create_column", 1, "notebook", L2)]
     assert "notebook" in kinds(page)
 
@@ -338,13 +358,6 @@ def test_shortcuts_create_columns(page, fake, key, mods, kind):
     page.grid_view.setFocus()
     QTest.keyClick(page.grid_view, key, mods)
     assert fake.calls_of("create_column") == [("create_column", 1, kind, L2)]
-
-
-def test_add_column_button_disabled_without_lessons(make_page):
-    from tests.fakes.fake_journal_service import FakeJournalService
-
-    page = make_page(FakeJournalService(["Коваленко Олена"]))
-    assert not page.add_column_btn.isEnabled()
 
 
 # --- меню заголовків ---
@@ -517,3 +530,24 @@ def test_computed_text_and_tooltips():
     assert "Автоматично: 8" in computed_tooltip("thematic", manual)
     annual = ComputedCell(4, False, 8, 2, None, False)
     assert "н/а семестрова рахується як 0" in computed_tooltip("annual", annual)
+
+
+def test_panel_order_matches_grid_order_for_same_day_lesson_after_thematic(make_page, fake):
+    from datetime import date as _d
+
+    from tests.fakes.fake_journal_service import FakeJournalService
+
+    f = FakeJournalService(["Коваленко Олена"])
+    a = f.add_lesson(_d(2026, 9, 2))
+    f.add_column("thematic", a)
+    f.add_lesson(_d(2026, 9, 2))  # той самий день, створений після тематичної
+    page = make_page(f)
+    grid_kinds = [c.kind for c in page.grid_view.grid_model.columns if c.kind in ("lesson", "thematic")]
+    assert grid_kinds == ["lesson", "thematic", "lesson"]
+    from journal.services.journal_types import LessonInfo
+
+    panel_order = [
+        ("lesson" if isinstance(r, LessonInfo) else r.kind, r.id) for r in page.lesson_panel._rows
+    ]
+    grid_order = [(c.kind, c.id) for c in page.grid_view.grid_model.columns if c.kind in ("lesson", "thematic", "notebook")]
+    assert panel_order == grid_order
