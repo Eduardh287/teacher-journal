@@ -8,6 +8,11 @@ from journal.services.journal_types import (
     MAX_TOPIC,
     AttendanceCode,
     CellInfo,
+    ComputedCell,
+    ComputedKey,
+    ExtraColumnInfo,
+    ExtraColumnKind,
+    GridColumn,
     GridData,
     JournalCandidate,
     JournalError,
@@ -21,6 +26,15 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.services.semesters import SemesterBoundaries
+
+DUPLICATE_COLUMN_TEXT = "Після цього уроку вже є такий стовпчик"
+_RANK = {"lesson": 0, "notebook": 1, "thematic": 2}  # за однакової дати: урок → зошит → тематична
+
+
+def half_up(total: int, count: int) -> int:
+    """Середнє з округленням «half up» у цілих числах."""
+    return (2 * total + count) // (2 * count)
+
 
 ARCHIVED_CLASS_TEXT = "Клас в архіві — журнал не можна видалити; спершу поверніть клас"
 
@@ -57,6 +71,9 @@ class FakeJournalService:
         self.calls: list[tuple] = []
         self.fail_next: JournalError | None = None
         self._next_lesson_id = 1
+        self.columns: list[dict] = []  # {"id", "kind", "date", "grades": {student_id: (grade|None, na)}}
+        self._next_column_id = 1
+        self.finals: dict[tuple[int, str, int], tuple[int | None, bool]] = {}  # (учень, "semester"/"annual", n)
 
     # --- службове ---
 
@@ -79,10 +96,114 @@ class FakeJournalService:
     def put_cell(self, student_id: int, lesson_id: int, attendance="present", grade=None, comment=None) -> None:
         self.cells[(student_id, lesson_id)] = CellInfo(attendance, grade, comment)
 
+    def add_column(self, kind: ExtraColumnKind, after_lesson_id: int) -> int:
+        """Додає «Тем»/«Зош» після уроку напряму (без запису в calls) і повертає id."""
+        column_id = self._next_column_id
+        self._next_column_id += 1
+        self.columns.append(
+            {"id": column_id, "kind": kind, "date": self._lesson(after_lesson_id)["date"], "grades": {}}
+        )
+        return column_id
+
+    def put_extra_grade(self, column_id: int, student_id: int, grade: int | None, na: bool = False) -> None:
+        """Ручна оцінка в тематичній / оцінка зошита напряму."""
+        self._column(column_id)["grades"][student_id] = (grade, na)
+
+    def put_final(self, student_id: int, kind: str, number: int, grade: int | None, na: bool = False) -> None:
+        self.finals[(student_id, kind, number)] = (grade, na)
+
+    def _column(self, column_id: int) -> dict:
+        for col in self.columns:
+            if col["id"] == column_id:
+                return col
+        raise JournalError("Стовпчик не знайдено")
+
+    def _semester_of(self, d: date) -> int:
+        return semester_for_date(d, self.journal.boundaries)
+
+    def _extra_infos(self, semester: int) -> list[ExtraColumnInfo]:
+        cols = sorted(
+            (c for c in self.columns if self._semester_of(c["date"]) == semester),
+            key=lambda c: (c["date"], _RANK[c["kind"]], c["id"]),
+        )
+        counts: dict[str, int] = {}
+        result = []
+        for c in cols:
+            counts[c["kind"]] = counts.get(c["kind"], 0) + 1
+            if c["kind"] == "notebook":
+                grades = sum(1 for g, _ in c["grades"].values() if g is not None)
+            else:
+                grades = len(c["grades"])
+            result.append(ExtraColumnInfo(c["id"], c["kind"], semester, c["date"], counts[c["kind"]], grades))
+        return result
+
+    # --- обчислення (правила сервісу: н/а = 0, half-up, «Зошит» не враховується) ---
+
+    def _compute_semester(self, student_id: int, semester: int):
+        thematics = [c for c in self._extra_infos(semester) if c.kind == "thematic"]
+        lessons = [r for r in self.lessons if self._semester_of(r["date"]) == semester]
+        result: dict[ComputedKey, ComputedCell] = {}
+        previous = None
+        values: list[int] = []
+        for column in thematics:
+            grades = []
+            for r in lessons:
+                cell = self.cells.get((student_id, r["id"]))
+                if cell is None or cell.grade is None:
+                    continue
+                if (previous is None or r["date"] > previous) and r["date"] <= column.after_date:
+                    grades.append(cell.grade)
+            previous = column.after_date
+            total, count = sum(grades), len(grades)
+            auto = half_up(total, count) if count else None
+            override, na = self._column(column.id)["grades"].get(student_id, (None, False))
+            cell = ComputedCell(auto, auto is None, total, count, override, na)
+            result[("thematic", column.id)] = cell
+            values.append(cell.value or 0)
+        if values:
+            total, count = sum(values), len(values)
+            mean = half_up(total, count)
+            sem_auto, sem_na = (mean, False) if mean else (None, True)
+        else:
+            total = count = 0
+            sem_auto, sem_na = None, True
+        o_grade, o_na = self.finals.get((student_id, "semester", semester), (None, False))
+        return result, ComputedCell(sem_auto, sem_na, total, count, o_grade, o_na)
+
+    def _computed_for(self, student_id: int, semester: int) -> dict[ComputedKey, ComputedCell]:
+        result, sem_cell = self._compute_semester(student_id, semester)
+        result[("semester", semester)] = sem_cell
+        for column in self._extra_infos(semester):
+            if column.kind == "notebook":
+                grade, _ = self._column(column.id)["grades"].get(student_id, (None, False))
+                if grade is not None:
+                    result[("notebook", column.id)] = ComputedCell(None, False, 0, 0, grade, False)
+        if semester == 2:
+            sems = [self._compute_semester(student_id, n)[1] for n in (1, 2)]
+            total = sum(c.value or 0 for c in sems)
+            auto = None if total == 0 else half_up(total, 2)
+            o_grade, o_na = self.finals.get((student_id, "annual", 0), (None, False))
+            result[("annual", 0)] = ComputedCell(auto, auto is None, total, 2, o_grade, o_na)
+            result[("semester", 1)] = sems[0]
+        return result
+
+    def student_computed(self, teacher_id, journal_id, student_id) -> dict[ComputedKey, ComputedCell]:
+        self._enter("student_computed", journal_id, student_id)
+        merged: dict[ComputedKey, ComputedCell] = {}
+        for semester in (1, 2):
+            merged.update(self._computed_for(student_id, semester))
+        return merged
+
     def _info(self, row: dict) -> LessonInfo:
         count = sum(1 for (_, lid) in self.cells if lid == row["id"])
         semester = semester_for_date(row["date"], self.journal.boundaries)
-        return LessonInfo(row["id"], row["date"], semester, row["type"], row["topic"], count)
+        # Наскрізний номер за рік: порядок (дата, id) серед усіх уроків журналу (етап 6).
+        ordered = sorted(self.lessons, key=lambda r: (r["date"], r["id"]))
+        number = next(i for i, r in enumerate(ordered, start=1) if r["id"] == row["id"])
+        return LessonInfo(
+            row["id"], row["date"], semester, row["type"], row["topic"], count,
+            homework=row.get("homework"), number=number,
+        )
 
     def _lesson(self, lesson_id: int) -> dict:
         for row in self.lessons:
@@ -128,6 +249,8 @@ class FakeJournalService:
             raise JournalError("У журналі є уроки чи оцінки — його не можна видалити")
         self.lessons.clear()
         self.cells.clear()
+        self.columns.clear()
+        self.finals.clear()
         self.journals = [j for j in self.journals if j.id != journal_id]
 
     def set_journal_semesters(self, teacher_id: int, journal_id: int, boundaries: SemesterBoundaries) -> JournalInfo:
@@ -165,7 +288,21 @@ class FakeJournalService:
         ids = {info.id for info in lessons}
         cells = {k: v for k, v in self.cells.items() if k[1] in ids}
         info = replace(self.journal, lesson_count=len(self.lessons))
-        return GridData(info, semester, list(self.students), lessons, cells)
+        extras = self._extra_infos(semester)
+        order = [((i.lesson_date, 0, i.id), GridColumn("lesson", i.id)) for i in lessons]
+        order += [((e.after_date, _RANK[e.kind], e.id), GridColumn(e.kind, e.id)) for e in extras]
+        columns = [col for _, col in sorted(order, key=lambda x: x[0])]
+        columns.append(GridColumn("semester", None))
+        if semester == 2:
+            columns.append(GridColumn("annual", None))
+        computed: dict[tuple[int, ComputedKey], ComputedCell] = {}
+        for student in self.students:
+            for key, cell in self._computed_for(student.id, semester).items():
+                computed[(student.id, key)] = cell
+        return GridData(
+            info, semester, list(self.students), lessons, cells,
+            columns=columns, extra_columns=extras, computed=computed,
+        )
 
     def _check_date(self, lesson_date: date) -> None:
         boundaries = self.journal.boundaries
@@ -180,27 +317,110 @@ class FakeJournalService:
             raise JournalError(f"Тема — не довше {MAX_TOPIC} символів")
         return topic
 
-    def create_lesson(self, teacher_id, journal_id, lesson_date, lesson_type="regular", topic=None) -> LessonInfo:
+    def create_lesson(
+        self, teacher_id, journal_id, lesson_date, lesson_type="regular", topic=None, homework=None
+    ) -> LessonInfo:
         self._enter("create_lesson", journal_id, lesson_date, lesson_type, topic)
         self._check_writable()
         self._check_date(lesson_date)
         lesson_id = self.add_lesson(lesson_date, lesson_type, self._topic(topic))
+        self._lesson(lesson_id)["homework"] = self._homework(homework)
         return self._info(self._lesson(lesson_id))
 
-    def update_lesson(self, teacher_id, lesson_id, lesson_date, lesson_type, topic) -> LessonInfo:
+    def update_lesson(
+        self, teacher_id, lesson_id, lesson_date, lesson_type, topic, homework=None
+    ) -> LessonInfo:
         self._enter("update_lesson", lesson_id, lesson_date, lesson_type, topic)
         self._check_writable()
         row = self._lesson(lesson_id)
         self._check_date(lesson_date)
-        row.update(date=lesson_date, type=lesson_type, topic=self._topic(topic))
+        row.update(date=lesson_date, type=lesson_type, topic=self._topic(topic),
+                   homework=self._homework(homework))
         return self._info(row)
+
+    def set_homework(self, teacher_id, lesson_id, homework) -> LessonInfo:
+        self._enter("set_homework", lesson_id, homework)
+        row = self._lesson(lesson_id)
+        row["homework"] = self._homework(homework)
+        return self._info(row)
+
+    @staticmethod
+    def _homework(text):
+        """Як у сервісі: trim, порожнє → None, понад 500 символів → помилка."""
+        text = (text or "").strip()
+        if len(text) > 500:
+            raise JournalError("Домашнє завдання — не довше 500 символів")
+        return text or None
 
     def delete_lesson(self, teacher_id: int, lesson_id: int) -> None:
         self._enter("delete_lesson", lesson_id)
         self._check_writable()
         row = self._lesson(lesson_id)
+        count = sum(1 for (_, lid) in self.cells if lid == lesson_id)
+        if count:
+            raise JournalError(
+                f"Урок має оцінки чи позначки ({count}) — його не можна видалити. "
+                "Спершу очистьте клітинки цього уроку."
+            )
         self.lessons.remove(row)
-        self.cells = {k: v for k, v in self.cells.items() if k[1] != lesson_id}
+
+    def create_column(self, teacher_id, journal_id, kind, after_lesson_id) -> ExtraColumnInfo:
+        self._enter("create_column", journal_id, kind, after_lesson_id)
+        after = self._lesson(after_lesson_id)
+        if any(c["kind"] == kind and c["date"] == after["date"] for c in self.columns):
+            raise JournalError(DUPLICATE_COLUMN_TEXT)
+        column_id = self.add_column(kind, after_lesson_id)
+        return next(i for i in self._extra_infos(self._semester_of(after["date"])) if i.id == column_id)
+
+    def move_column(self, teacher_id, column_id, after_lesson_id) -> ExtraColumnInfo:
+        self._enter("move_column", column_id, after_lesson_id)
+        column = self._column(column_id)
+        after = self._lesson(after_lesson_id)
+        if any(c is not column and c["kind"] == column["kind"] and c["date"] == after["date"] for c in self.columns):
+            raise JournalError(DUPLICATE_COLUMN_TEXT)
+        column["date"] = after["date"]
+        return next(i for i in self._extra_infos(self._semester_of(after["date"])) if i.id == column_id)
+
+    def delete_column(self, teacher_id, column_id) -> None:
+        self._enter("delete_column", column_id)
+        column = self._column(column_id)
+        if column["kind"] == "notebook":
+            count = sum(1 for g, _ in column["grades"].values() if g is not None)
+            if count:
+                raise JournalError(
+                    f"У стовпчику «Зошит» є оцінки ({count}) — його не можна видалити. Спершу очистьте їх."
+                )
+        self.columns.remove(column)
+
+    def set_override(self, teacher_id, journal_id, student_id, key, grade, na=False):
+        self._enter("set_override", journal_id, student_id, key, grade, na)
+        student = next((s for s in self.students if s.id == student_id), None)
+        if student is None:
+            raise JournalError("Учня не знайдено")
+        if student.archived:
+            raise JournalError("Учень вибув — його клітинки лише для перегляду")
+        if grade is not None and not 1 <= grade <= 12:
+            raise JournalError("Оцінка має бути від 1 до 12")
+        kind, number = key
+        if kind == "notebook" and na:
+            raise JournalError("Для «Зошита» н/а не ставиться")
+        if kind in ("thematic", "notebook"):
+            column = self._column(number)
+            if column["kind"] != kind:
+                raise JournalError("Стовпчик не знайдено")
+            if grade is None and not na:
+                column["grades"].pop(student_id, None)
+            else:
+                column["grades"][student_id] = (grade, na)
+        elif kind in ("semester", "annual"):
+            final_key = (student_id, kind, number)
+            if grade is None and not na:
+                self.finals.pop(final_key, None)
+            else:
+                self.finals[final_key] = (grade, na)
+        else:
+            raise JournalError("Невідомий стовпчик")
+        return self.student_computed(teacher_id, journal_id, student_id)
 
     def set_cell(
         self,

@@ -12,7 +12,7 @@ from journal.services.ua_sort import class_name_key, ukrainian_sort_key
 def apply_boundaries(
     repo: JournalRepository, journals: list[Journal], boundaries: SemesterBoundaries
 ) -> int:
-    """Застосовує межі до журналів: перевіряє всі уроки, перераховує lessons.semester.
+    """Застосовує межі до журналів: перевіряє всі уроки й extra-стовпчики, перераховує semester.
 
     Якщо хоч один урок потрапляє в канікули чи поза навчальний рік — нічого не змінює й
     кидає SemesterConflict (уроки впорядковані за роком, класом, предметом і датою).
@@ -38,6 +38,25 @@ def apply_boundaries(
             )
         else:
             new_semesters[lesson.id] = semester
+    # Extra-стовпчики (тематична, зошит) теж прив'язані до дати: їхній семестр перераховується.
+    columns = repo.extra_columns_of_journals([j.id for j in journals])
+    new_column_semesters: dict[int, int] = {}
+    for column in columns:
+        journal = by_journal[column.journal_id]
+        school_class = journal.school_class
+        semester = boundaries.semester_of_month(column.after_date.month)
+        if semester is None or not boundaries.contains(school_class.school_year, column.after_date):
+            conflicts.append(
+                LessonConflict(
+                    journal.id,
+                    school_class.name,
+                    school_class.school_year,
+                    journal.subject.name,
+                    column.after_date,
+                )
+            )
+        else:
+            new_column_semesters[column.id] = semester
     if conflicts:
         conflicts.sort(
             key=lambda c: (
@@ -50,6 +69,8 @@ def apply_boundaries(
         raise SemesterConflict(conflicts)
     for lesson in lessons:
         lesson.semester = new_semesters[lesson.id]
+    for column in columns:
+        column.semester = new_column_semesters[column.id]
     for journal in journals:
         set_boundaries(journal, boundaries)
     repo.session.flush()

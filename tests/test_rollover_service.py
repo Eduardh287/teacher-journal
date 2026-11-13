@@ -58,20 +58,20 @@ def test_nothing_before_august(roll, classes, teacher):
 
 def test_plan_actions(roll, classes, journals, teacher, session):
     c9 = make_class(classes, teacher, "9-А", ["Іваненко Іван", "Андрієнко Оля"])
-    make_class(classes, teacher, "11-Б")
+    make_class(classes, teacher, "12-Б")
     make_class(classes, teacher, "Гурток")
     make_class(classes, teacher, "10-А")
     make_class(classes, teacher, "11-А", year="2027-2028")  # цільовий клас для 10-А вже є
     journals.create_journal(teacher.id, c9.id, subject_id(session, "Фізика"))
     journals.create_journal(teacher.id, c9.id, subject_id(session, "Алгебра"))
     items = {i.class_name: i for i in roll.plan(teacher.id, AUGUST)}
-    assert set(items) == {"9-А", "11-Б", "Гурток", "10-А"}  # клас 11-А (2027-2028) ще не завершений
+    assert set(items) == {"9-А", "12-Б", "Гурток", "10-А"}  # клас 11-А (2027-2028) ще не завершений
     nine = items["9-А"]
     assert (nine.action, nine.new_name, nine.new_year, nine.target_exists) == (
         "promote", "10-А", "2027-2028", False,
     )
     assert nine.student_count == 2 and nine.subject_names == ("Алгебра", "Фізика")
-    assert items["11-Б"].action == "archive" and items["11-Б"].new_name is None
+    assert items["12-Б"].action == "archive" and items["12-Б"].new_name is None
     assert items["Гурток"].action == "archive"
     assert items["10-А"].action == "promote" and items["10-А"].target_exists
     assert items["10-А"].new_name == "11-А"
@@ -125,8 +125,8 @@ def test_apply_without_copy_journals_leaves_none(roll, classes, journals, teache
     assert journals.list_journals(teacher.id) == []
 
 
-def test_apply_eleventh_and_nonnumeric_archived(roll, classes, teacher):
-    make_class(classes, teacher, "11-А", ["Іваненко Іван"])
+def test_apply_twelfth_and_nonnumeric_archived(roll, classes, teacher):
+    make_class(classes, teacher, "12-А", ["Іваненко Іван"])
     make_class(classes, teacher, "Гурток", ["Петренко Іван"])
     roll.apply(teacher.id, AUGUST)
     assert classes.list_classes(teacher.id) == []
@@ -209,3 +209,53 @@ def test_two_classes_mapping_to_same_new_name(session):
     RolloverService(session).apply(teacher.id, date(2027, 8, 1))  # не падає з IntegrityError
     new = [c for c in cs.list_classes(teacher.id) if c.school_year == "2027-2028"]
     assert [c.name for c in new] == ["10-А"]
+
+
+def test_eleventh_is_promoted_to_twelfth(roll, classes, teacher):
+    """Останній клас — 12-й: 11 → 12 переходить, 12 → архів."""
+    make_class(classes, teacher, "11-А", ["Іваненко Іван"])
+    (item,) = roll.plan(teacher.id, AUGUST)
+    assert (item.action, item.new_name, item.new_year, item.years_skipped) == ("promote", "12-А", "2027-2028", 0)
+    roll.apply(teacher.id, AUGUST)
+    assert [(c.name, c.school_year) for c in classes.list_classes(teacher.id)] == [("12-А", "2027-2028")]
+
+
+def test_catch_up_in_one_launch_creates_archived_skipped_years(roll, classes, journals, teacher, session):
+    """9-А (2024-2025) у листопаді 2026 → 11-А (2026-2027); пропущений 10-А (2025-2026) — порожній архівний."""
+    today = date(2026, 11, 13)
+    c = make_class(classes, teacher, "9-А", ["Іваненко Іван"], year="2024-2025")
+    journals.create_journal(teacher.id, c.id, subject_id(session, "Алгебра"))
+    (item,) = roll.plan(teacher.id, today)
+    assert (item.action, item.new_name, item.new_year, item.years_skipped) == (
+        "promote", "11-А", "2026-2027", 1,
+    )
+    roll.apply(teacher.id, today, copy_journals=True)
+
+    everything = {(x.name, x.school_year): x for x in classes.list_classes(teacher.id, include_archived=True)}
+    assert set(everything) == {("9-А", "2024-2025"), ("10-А", "2025-2026"), ("11-А", "2026-2027")}
+    assert [k for k, x in everything.items() if not x.archived] == [("11-А", "2026-2027")]
+    skipped = everything[("10-А", "2025-2026")]
+    assert skipped.archived and skipped.student_count == 0
+    assert journals.list_journals(teacher.id, include_archived=True)[0].class_name in {"9-А", "10-А", "11-А"}
+    assert [j.class_name for j in journals.list_journals(teacher.id)] == ["11-А"]  # журнали лише в новому
+    assert classes.list_students(teacher.id, skipped.id) == []
+    assert roll.apply(teacher.id, today) == []  # повторний запуск нічого не робить
+
+
+def test_catch_up_beyond_twelfth_is_archived_without_skipped(roll, classes, teacher):
+    make_class(classes, teacher, "11-А", ["Іваненко Іван"], year="2024-2025")  # 11 + 2 > 12
+    (item,) = roll.plan(teacher.id, date(2026, 11, 13))
+    assert item.action == "archive" and item.years_skipped == 0
+    roll.apply(teacher.id, date(2026, 11, 13))
+    assert [(c.name, c.archived) for c in classes.list_classes(teacher.id, include_archived=True)] == [
+        ("11-А", True)
+    ]
+
+
+def test_skipped_year_class_already_exists_is_not_duplicated(roll, classes, teacher):
+    make_class(classes, teacher, "10-А", year="2025-2026")
+    classes.set_class_archived(teacher.id, classes.list_classes(teacher.id)[0].id, True)
+    make_class(classes, teacher, "9-А", ["Іваненко Іван"], year="2024-2025")
+    roll.apply(teacher.id, date(2026, 11, 13))  # не падає на унікальності
+    names = sorted((c.name, c.school_year) for c in classes.list_classes(teacher.id, include_archived=True))
+    assert names == [("10-А", "2025-2026"), ("11-А", "2026-2027"), ("9-А", "2024-2025")]

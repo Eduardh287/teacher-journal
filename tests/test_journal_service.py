@@ -285,15 +285,27 @@ def test_update_lesson_reports_entry_count(svc, teacher, lesson, student_ids):
     assert svc.update_lesson(teacher.id, lesson.id, D1, "regular", None).entry_count == 1
 
 
-def test_delete_lesson_removes_entries(svc, session, teacher, lesson, student_ids):
+def test_delete_lesson_with_entries_refused(svc, session, teacher, lesson, student_ids):
+    """Правило E: урок з будь-якою відміткою (оцінка, н/хв/з, коментар) не видаляється."""
     svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", 7, None)
     svc.set_cell(teacher.id, lesson.id, student_ids[1], "late", None, None)
-    svc.delete_lesson(teacher.id, lesson.id)
-    assert session.get(Lesson, lesson.id) is None
+    with pytest.raises(JournalError) as error:
+        svc.delete_lesson(teacher.id, lesson.id)
+    assert str(error.value) == (
+        "Урок має оцінки чи позначки (2) — його не можна видалити. Спершу очистьте клітинки цього уроку."
+    )
+    assert session.get(Lesson, lesson.id) is not None
     left = session.scalar(
         select(func.count()).select_from(LessonEntry).where(LessonEntry.lesson_id == lesson.id)
     )
-    assert left == 0
+    assert left == 2
+
+
+def test_delete_lesson_after_clearing_cells(svc, session, teacher, lesson, student_ids):
+    svc.set_cell(teacher.id, lesson.id, student_ids[0], "absent", None, None)
+    svc.set_cell(teacher.id, lesson.id, student_ids[0], "present", None, None)  # очищено
+    svc.delete_lesson(teacher.id, lesson.id)
+    assert session.get(Lesson, lesson.id) is None
 
 
 def test_archived_class_journal_stays_editable(svc, classes, teacher, klass, journal, lesson, student_ids):

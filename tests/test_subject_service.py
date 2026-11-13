@@ -6,7 +6,7 @@ from journal.services.subject_service import SubjectError, SubjectService
 
 def test_initial_subjects_present(session):
     names = [s.name for s in SubjectService(session).list_subjects()]
-    assert names == ["Алгебра", "Геометрія", "Математика", "Фізика"]
+    assert names == ["Алгебра", "Геометрія", "Математика", "ПП ТФВ", "Фізика"]
 
 
 def test_add_subject_trims_and_sorts(session):

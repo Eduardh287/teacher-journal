@@ -6,7 +6,7 @@
 from collections.abc import Callable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QPolygon
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QKeyEvent, QPainter, QPen, QPolygon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -19,9 +19,18 @@ from PySide6.QtWidgets import (
 )
 
 from journal.services.class_service import StudentInfo
-from journal.services.journal_types import AttendanceCode, CellInfo, GridData, LessonInfo
+from journal.services.journal_types import (
+    AttendanceCode,
+    CellInfo,
+    ComputedCell,
+    ComputedKey,
+    ExtraColumnInfo,
+    GridColumn,
+    GridData,
+    LessonInfo,
+)
 from journal.ui import theme
-from journal.ui.journal_dialogs import LESSON_TYPES, CommentDialog
+from journal.ui.journal_dialogs import EXTRA_COLUMN_TYPES, FINAL_COLUMN_TITLES, LESSON_TYPES, CommentDialog
 
 GRADE_CHAIN_MS = 500  # скільки чекаємо другу цифру після «1» (10/11/12)
 COLUMN_WIDTH = 56
@@ -33,6 +42,11 @@ LessonRole = Qt.ItemDataRole.UserRole + 1   # LessonInfo заголовка ст
 CellRole = Qt.ItemDataRole.UserRole + 2     # CellInfo клітинки
 PendingRole = Qt.ItemDataRole.UserRole + 3  # True, якщо в клітинці очікує друга цифра
 StudentRole = Qt.ItemDataRole.UserRole + 4  # StudentInfo заголовка рядка
+ComputedRole = Qt.ItemDataRole.UserRole + 5  # ComputedCell клітинки (або None) — етап 6
+ColumnRole = Qt.ItemDataRole.UserRole + 6    # GridColumn заголовка стовпця
+ExtraRole = Qt.ItemDataRole.UserRole + 7     # ExtraColumnInfo заголовка (для «Тем»/«Зош») або None
+
+NA_TEXT = "н/а"
 
 EMPTY_CELL = CellInfo("present", None, None)
 
@@ -42,9 +56,23 @@ SICK_KEYS = ("х", "[")
 LATE_KEYS = ("з", "p")
 
 # Тло заголовка за типом уроку (None — звичайне)
-_LESSON_TINT = {"test": "lesson_test_soft", "lab": "lesson_lab_soft", "independent": "lesson_independent_soft"}
+_LESSON_TINT = {
+    "test": "lesson_test_soft",
+    "lab": "lesson_lab_soft",
+    "independent": "lesson_independent_soft",
+    "quiz": "lesson_quiz_soft",
+    "project": "lesson_project_soft",
+}
+# Тло стовпців без дати (заголовок і клітинки)
+_COLUMN_TINT = {
+    "thematic": "col_thematic_soft",
+    "notebook": "col_notebook_soft",
+    "semester": "col_final_soft",
+    "annual": "col_final_soft",
+}
 
 SaveCell = Callable[[int, int, AttendanceCode, "int | None", "str | None"], "tuple[bool, CellInfo | None]"]
+SaveOverride = Callable[[int, ComputedKey, "int | None", bool], "tuple[bool, dict[ComputedKey, ComputedCell] | None]"]
 
 
 def cell_text(cell: CellInfo) -> str:
@@ -58,6 +86,65 @@ def cell_text(cell: CellInfo) -> str:
     return str(cell.grade) if cell.grade is not None else ""
 
 
+def grades_text(n: int) -> str:
+    """«1 оцінка», «2 оцінки», «5 оцінок»."""
+    if n % 100 in (11, 12, 13, 14):
+        word = "оцінок"
+    elif n % 10 == 1:
+        word = "оцінка"
+    elif n % 10 in (2, 3, 4):
+        word = "оцінки"
+    else:
+        word = "оцінок"
+    return f"{n} {word}"
+
+
+def _mean_text(total: int, count: int) -> str:
+    return f"{total / count:.2f}".replace(".", ",") if count else "—"
+
+
+def computed_text(kind: str, cell: ComputedCell | None) -> str:
+    """Текст обчислюваної клітинки: оцінка або «н/а» (порожньо, якщо нічого немає)."""
+    if cell is None:
+        return ""
+    if kind == "notebook":
+        return str(cell.value) if cell.value is not None else ""
+    if cell.is_na:
+        return NA_TEXT
+    return str(cell.value) if cell.value is not None else ""
+
+
+def computed_tooltip(kind: str, cell: ComputedCell | None) -> str | None:
+    """Підказка до клітинки тематичної / зошита / семестрової / річної."""
+    if kind == "notebook":
+        return "Оцінка за зошит — не враховується в середніх"
+    if cell is None:
+        return None
+    if cell.is_manual:
+        shown = NA_TEXT if cell.override_na else str(cell.override)
+        auto = NA_TEXT if cell.auto_na or cell.auto is None else str(cell.auto)
+        text = f"Виставлено вручну: {shown}"
+        if cell.override_na:
+            text += " (у розрахунках н/а = 0)"
+        return f"{text}\nАвтоматично: {auto}. Del — повернути автоматичне значення"
+    if kind == "thematic":
+        if cell.auto_na:
+            return "н/а — немає оцінок за тему"
+        return f"Середнє {_mean_text(cell.total, cell.count)} ({grades_text(cell.count)}) → {cell.auto}"
+    if kind == "semester":
+        if cell.auto_na:
+            if cell.count == 0:
+                return "н/а — немає тематичних оцінок"
+            return "н/а — усі тематичні н/а (н/а = 0)"
+        return f"Середнє тематичних {_mean_text(cell.total, cell.count)} (н/а = 0) → {cell.auto}"
+    if cell.auto_na:
+        return "н/а — немає семестрових оцінок"
+    return (
+        f"Середнє двох семестрових {_mean_text(cell.total, 2)} → {cell.auto}\n"
+        "Відсутня чи н/а семестрова рахується як 0"
+    )
+
+
 def header_text(lesson: LessonInfo) -> str:
     """Текст заголовка стовпця: «12.11» і, для не звичайних уроків, абревіатура другим рядком."""
     abbr = LESSON_TYPES[lesson.lesson_type][1]
@@ -66,13 +153,17 @@ def header_text(lesson: LessonInfo) -> str:
 
 
 class JournalGridModel(QAbstractTableModel):
-    """Рядки — учні, стовпці — уроки семестру. Змінюється лише через apply_cell після успішного збереження."""
+    """Рядки — учні, стовпці — уроки, «Тем»/«Зош» і підсумкові. Змінюється лише після успішного збереження."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.students: list[StudentInfo] = []
         self.lessons: list[LessonInfo] = []
+        self.columns: list[GridColumn] = []
+        self.extras: dict[int, ExtraColumnInfo] = {}
+        self.semester = 1
         self.cells: dict[tuple[int, int], CellInfo] = {}
+        self.computed: dict[tuple[int, ComputedKey], ComputedCell] = {}
         self.read_only = False
         self.pending: tuple[int, int] | None = None  # (рядок, стовпець) із очікуваною «1»
 
@@ -80,7 +171,11 @@ class JournalGridModel(QAbstractTableModel):
         self.beginResetModel()
         self.students = list(grid.students)
         self.lessons = list(grid.lessons)
+        self.columns = list(grid.columns) or [GridColumn("lesson", lesson.id) for lesson in grid.lessons]
+        self.extras = {e.id: e for e in grid.extra_columns}
+        self.semester = grid.semester
         self.cells = dict(grid.cells)
+        self.computed = dict(grid.computed)
         # Архівний журнал редагується (рішення автора); лише рядки вибулих учнів — для перегляду.
         self.read_only = False
         self.pending = None
@@ -92,20 +187,64 @@ class JournalGridModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.students)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self.lessons)
+        return 0 if parent.isValid() else len(self.columns)
+
+    def kind_at(self, column: int) -> str:
+        return self.columns[column].kind
+
+    def lesson_at(self, column: int) -> LessonInfo | None:
+        """Урок стовпця (None для «Тем»/«Зош»/підсумкових)."""
+        if not 0 <= column < len(self.columns) or self.columns[column].kind != "lesson":
+            return None
+        return next((x for x in self.lessons if x.id == self.columns[column].id), None)
+
+    def computed_key(self, column: int) -> ComputedKey | None:
+        col = self.columns[column]
+        if col.kind == "lesson":
+            return None
+        if col.kind == "semester":
+            return ("semester", self.semester)
+        if col.kind == "annual":
+            return ("annual", 0)
+        return (col.kind, col.id)
+
+    def computed_cell(self, row: int, column: int) -> ComputedCell | None:
+        key = self.computed_key(column)
+        return None if key is None else self.computed.get((self.students[row].id, key))
 
     def cell(self, row: int, column: int) -> CellInfo:
-        return self.cells.get((self.students[row].id, self.lessons[column].id), EMPTY_CELL)
+        lesson = self.lesson_at(column)
+        if lesson is None:
+            return EMPTY_CELL
+        return self.cells.get((self.students[row].id, lesson.id), EMPTY_CELL)
+
+    def apply_computed(
+        self, student_id: int, result: dict[ComputedKey, ComputedCell] | None, edited: ComputedKey | None = None
+    ) -> None:
+        """Підставляє обчислювані клітинки учня, які повернув сервіс; edited — ключ, що міг зникнути."""
+        if edited is not None:
+            self.computed.pop((student_id, edited), None)
+        for key, cell in (result or {}).items():
+            self.computed[(student_id, key)] = cell
+        row = next((i for i, s in enumerate(self.students) if s.id == student_id), -1)
+        if row >= 0 and self.columns:
+            self.dataChanged.emit(self.index(row, 0), self.index(row, len(self.columns) - 1))
 
     def is_editable(self, row: int) -> bool:
         return not self.read_only and not self.students[row].archived
 
     def column_of(self, lesson_id: int) -> int:
-        return next((i for i, lesson in enumerate(self.lessons) if lesson.id == lesson_id), -1)
+        return next((i for i, c in enumerate(self.columns) if c.kind == "lesson" and c.id == lesson_id), -1)
+
+    def column_index(self, column: GridColumn) -> int:
+        return next((i for i, c in enumerate(self.columns) if c == column), -1)
 
     def apply_cell(self, row: int, column: int, cell: CellInfo | None) -> None:
         """Записує в модель те, що повернув сервіс (None = клітинка порожня)."""
-        key = (self.students[row].id, self.lessons[column].id)
+        lesson = self.lesson_at(column)
+        if lesson is None:
+            return
+        key = (self.students[row].id, lesson.id)
         if cell is None:
             self.cells.pop(key, None)
         else:
@@ -130,11 +269,18 @@ class JournalGridModel(QAbstractTableModel):
             return self.pending == (row, column)
         if role == CellRole:
             return self.cell(row, column)
+        kind = self.kind_at(column)
+        if role == ComputedRole:
+            return self.computed_cell(row, column)
         if role == Qt.ItemDataRole.DisplayRole:
             if self.pending == (row, column):
                 return "1"
+            if kind != "lesson":
+                return computed_text(kind, self.computed_cell(row, column))
             return cell_text(self.cell(row, column))
         if role == Qt.ItemDataRole.ToolTipRole:
+            if kind != "lesson":
+                return computed_tooltip(kind, self.computed_cell(row, column))
             return self.cell(row, column).comment
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignCenter)
@@ -142,17 +288,36 @@ class JournalGridModel(QAbstractTableModel):
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal:
-            if not 0 <= section < len(self.lessons):
+            if not 0 <= section < len(self.columns):
                 return None
-            lesson = self.lessons[section]
+            column = self.columns[section]
+            if role == ColumnRole:
+                return column
+            if column.kind != "lesson":
+                extra = self.extras.get(column.id) if column.id is not None else None
+                if role == ExtraRole:
+                    return extra
+                if role == Qt.ItemDataRole.DisplayRole:
+                    if column.kind in FINAL_COLUMN_TITLES:
+                        return FINAL_COLUMN_TITLES[column.kind][1]
+                    abbr = EXTRA_COLUMN_TYPES[column.kind][1]
+                    return f"{abbr}\n{extra.ordinal}" if extra else abbr
+                if role == Qt.ItemDataRole.ToolTipRole:
+                    return _column_tooltip(column.kind, extra)
+                return None
+            lesson = self.lesson_at(section)
+            if lesson is None:
+                return None
             if role == Qt.ItemDataRole.DisplayRole:
                 return header_text(lesson)
             if role == LessonRole:
                 return lesson
             if role == Qt.ItemDataRole.ToolTipRole:
                 name = LESSON_TYPES[lesson.lesson_type][0]
-                text = f"Урок № {section + 1} · {lesson.lesson_date:%d.%m.%Y} · {name}"
-                return f"{text}\n{lesson.topic}" if lesson.topic else text
+                number = lesson.number or self.lessons.index(lesson) + 1
+                text = f"Урок № {number} · {lesson.lesson_date:%d.%m.%Y} · {name}"
+                text = f"{text}\n{lesson.topic}" if lesson.topic else text
+                return f"{text}\nДомашнє завдання: {lesson.homework}" if lesson.homework else text
             return None
         if not 0 <= section < len(self.students):
             return None
@@ -175,6 +340,17 @@ class JournalGridModel(QAbstractTableModel):
         return None
 
 
+def _column_tooltip(kind: str, extra: ExtraColumnInfo | None) -> str:
+    n = f" № {extra.ordinal}" if extra else ""
+    if kind == "thematic":
+        return f"Тематична{n} — середнє оцінок за тему, можна виставити вручну"
+    if kind == "notebook":
+        return f"Зошит{n} — оцінка за зошит, не враховується в середніх"
+    if kind == "semester":
+        return "Семестрова — середнє тематичних оцінок"
+    return "Річна — середнє двох семестрових оцінок"
+
+
 class JournalHeaderView(QHeaderView):
     """Горизонтальний заголовок: дата й абревіатура типу уроку на тлі, що залежить від типу."""
 
@@ -190,13 +366,47 @@ class JournalHeaderView(QHeaderView):
     def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:
         if not rect.isValid():
             return
-        lesson = self.model().headerData(logical_index, Qt.Orientation.Horizontal, LessonRole)
+        model = self.model()
+        lesson = model.headerData(logical_index, Qt.Orientation.Horizontal, LessonRole)
+        column: GridColumn | None = model.headerData(logical_index, Qt.Orientation.Horizontal, ColumnRole)
         painter.save()
-        token = _LESSON_TINT.get(lesson.lesson_type) if lesson else None
+        if lesson:
+            token = _LESSON_TINT.get(lesson.lesson_type)
+        else:
+            token = _COLUMN_TINT.get(column.kind) if column else None
         painter.fillRect(rect, QColor(theme.color(token or "surface")))
         painter.setPen(QPen(QColor(theme.color("border"))))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.drawLine(rect.topRight(), rect.bottomRight())
+        if column is not None and column.kind == "semester":
+            painter.setPen(QPen(QColor(theme.color("muted")), 2))
+            painter.drawLine(rect.topLeft(), rect.bottomLeft())
+        if column is not None and column.kind in ("thematic", "notebook"):
+            extra: ExtraColumnInfo | None = model.headerData(logical_index, Qt.Orientation.Horizontal, ExtraRole)
+            font = QFont(painter.font())
+            font.setPointSize(9)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(theme.color("text")))
+            painter.drawText(
+                QRect(rect.x(), rect.y() + 6, rect.width(), 18), Qt.AlignmentFlag.AlignCenter,
+                EXTRA_COLUMN_TYPES[column.kind][1],
+            )
+            if extra:
+                font.setBold(False)
+                font.setPointSize(8)
+                painter.setFont(font)
+                painter.setPen(QColor(theme.color("muted")))
+                painter.drawText(
+                    QRect(rect.x(), rect.y() + 24, rect.width(), 16), Qt.AlignmentFlag.AlignCenter, str(extra.ordinal)
+                )
+        elif column is not None and column.kind in FINAL_COLUMN_TITLES:
+            font = QFont(painter.font())
+            font.setPointSize(9)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(theme.color("text")))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, FINAL_COLUMN_TITLES[column.kind][1])
         if lesson:
             abbr = LESSON_TYPES[lesson.lesson_type][1]
             top = QRect(rect.x(), rect.y() + 6, rect.width(), 18)
@@ -225,11 +435,15 @@ class JournalCellDelegate(QStyledItemDelegate):
         row = index.row()
         rect = option.rect
         muted_row = model.students[row].archived
+        kind = model.kind_at(index.column())
+        computed: ComputedCell | None = index.data(ComputedRole)
         painter.save()
 
         soft = {"absent": "mark_absent_soft", "sick": "mark_sick_soft", "late": "mark_late_soft"}.get(cell.attendance)
         if muted_row:
             painter.fillRect(rect, QColor(theme.color("hover")))
+        elif kind != "lesson":
+            painter.fillRect(rect, QColor(theme.color(_COLUMN_TINT[kind])))
         elif soft:
             painter.fillRect(rect, QColor(theme.color(soft)))
         else:
@@ -239,23 +453,44 @@ class JournalCellDelegate(QStyledItemDelegate):
         painter.setPen(QPen(QColor(theme.color("border"))))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.drawLine(rect.topRight(), rect.bottomRight())
+        if kind == "semester":  # жирний роздільник перед підсумковими стовпцями
+            painter.setPen(QPen(QColor(theme.color("muted")), 2))
+            painter.drawLine(rect.topLeft(), rect.bottomLeft())
 
         # текст
         text = index.data(Qt.ItemDataRole.DisplayRole)
         if text:
             pending = index.data(PendingRole)
-            color_token = {"absent": "mark_absent", "sick": "mark_sick", "late": "mark_late"}.get(cell.attendance, "text")
+            if kind == "lesson":
+                color_token = {"absent": "mark_absent", "sick": "mark_sick", "late": "mark_late"}.get(
+                    cell.attendance, "text"
+                )
+                bold = not pending
+                manual = False
+            else:
+                color_token = "text"
+                # авто — звичайна вага; ручне — жирний + акцентне підкреслення; «Зош» — сама оцінка
+                manual = bool(computed and computed.is_manual and kind != "notebook")
+                bold = manual or kind == "notebook"
+                if computed is not None and computed.is_na and not computed.is_manual:
+                    color_token = "muted"
             if muted_row or pending:
                 color_token = "muted"
             font = QFont(painter.font())
-            font.setBold(not pending)
+            font.setBold(bold and not pending)
             font.setItalic(bool(pending))
             painter.setFont(font)
             painter.setPen(QColor(theme.color(color_token)))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            if manual and not pending:
+                metrics = QFontMetrics(font)
+                width = metrics.horizontalAdvance(text)
+                y = rect.center().y() + metrics.ascent() // 2 + 3
+                painter.setPen(QPen(QColor(theme.color("accent")), 2))
+                painter.drawLine(rect.center().x() - width // 2, y, rect.center().x() + (width + 1) // 2, y)
 
         # трикутник коментаря в правому верхньому куті
-        if cell.comment:
+        if kind == "lesson" and cell.comment:
             size = 10
             triangle = QPolygon(
                 [
@@ -281,10 +516,13 @@ class JournalGridView(QTableView):
 
     lesson_edit_requested = Signal(int)    # id уроку (подвійний клік / меню)
     lesson_delete_requested = Signal(int)
+    column_move_requested = Signal(int)    # id extra-стовпчика («Тем»/«Зош»)
+    column_delete_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.saver: SaveCell | None = None
+        self.override_saver: SaveOverride | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.flush_pending)
@@ -352,12 +590,38 @@ class JournalGridView(QTableView):
         if CellInfo(attendance, grade, comment) == old or self.saver is None:
             return
         student_id = self.grid_model.students[row].id
-        lesson_id = self.grid_model.lessons[column].id
+        lesson = self.grid_model.lesson_at(column)
+        if lesson is None:
+            return
+        lesson_id = lesson.id
         ok, result = self.saver(student_id, lesson_id, attendance, grade, comment)
         if ok:
             self.grid_model.apply_cell(row, column, result)
 
+    def _save_override(self, row: int, column: int, grade: int | None, na: bool = False) -> None:
+        """Ручна оцінка / н/а / очищення в обчислюваній клітинці (або оцінка «Зошита»)."""
+        model = self.grid_model
+        key = model.computed_key(column)
+        if key is None or self.override_saver is None:
+            return
+        old = model.computed_cell(row, column)
+        if grade is not None:
+            if old is not None and old.override == grade and not old.override_na:
+                return
+        elif na:
+            if old is not None and old.override_na:
+                return
+        elif old is None or not old.is_manual:
+            return
+        student_id = model.students[row].id
+        ok, result = self.override_saver(student_id, key, grade, na)
+        if ok:
+            model.apply_computed(student_id, result, edited=key)
+
     def _set_grade(self, row: int, column: int, grade: int) -> None:
+        if self.grid_model.kind_at(column) != "lesson":
+            self._save_override(row, column, grade)
+            return
         old = self.grid_model.cell(row, column)
         attendance = "present" if old.attendance in ("absent", "sick") else old.attendance
         self._save(row, column, attendance, grade, old.comment)
@@ -395,7 +659,7 @@ class JournalGridView(QTableView):
     def edit_comment(self) -> None:
         """F2: діалог коментаря до поточної клітинки."""
         ref = self._ref()
-        if ref is None or not self.grid_model.is_editable(ref[0]):
+        if ref is None or not self.grid_model.is_editable(ref[0]) or self.grid_model.kind_at(ref[1]) != "lesson":
             return
         old = self.grid_model.cell(*ref)
         text = self.ask_comment(old.comment or "")
@@ -452,18 +716,25 @@ class JournalGridView(QTableView):
         elif mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
             super().keyPressEvent(event)
         elif key == Qt.Key.Key_F2:
-            self.edit_comment()
+            self.edit_comment()  # для не-урочних стовпців нічого не робить
         elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             if self.grid_model.is_editable(ref[0]):
-                old = self.grid_model.cell(*ref)
-                self._save(*ref, "present", None, old.comment)
+                if self.grid_model.kind_at(ref[1]) != "lesson":
+                    self._save_override(*ref, None)
+                else:
+                    old = self.grid_model.cell(*ref)
+                    self._save(*ref, "present", None, old.comment)
         elif len(text) == 1 and text in "0123456789":
             if self.grid_model.is_editable(ref[0]):
                 self._grade_key(int(text), *ref)
         elif text in ABSENT_KEYS + SICK_KEYS + LATE_KEYS and text:
             if self.grid_model.is_editable(ref[0]):
-                mark = "absent" if text in ABSENT_KEYS else "sick" if text in SICK_KEYS else "late"
-                self._mark_key(mark, *ref)
+                kind = self.grid_model.kind_at(ref[1])
+                if kind == "lesson":
+                    mark = "absent" if text in ABSENT_KEYS else "sick" if text in SICK_KEYS else "late"
+                    self._mark_key(mark, *ref)
+                elif kind != "notebook" and text in ABSENT_KEYS:
+                    self._save_override(*ref, None, na=True)  # «н» у обчислюваній клітинці → н/а
         elif key in (
             Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down,
             Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
@@ -471,25 +742,31 @@ class JournalGridView(QTableView):
             super().keyPressEvent(event)
         # решту клавіш ігноруємо (щоб не спрацьовував пошук за першою літерою)
 
-    # --- заголовки уроків ---
+    # --- заголовки стовпців ---
 
-    def _lesson_id_at(self, section: int) -> int | None:
-        return self.grid_model.lessons[section].id if 0 <= section < len(self.grid_model.lessons) else None
+    def _column_at(self, section: int) -> GridColumn | None:
+        return self.grid_model.columns[section] if 0 <= section < len(self.grid_model.columns) else None
 
     def _on_header_double_click(self, section: int) -> None:
-        lesson_id = self._lesson_id_at(section)
-        if lesson_id is not None and not self.grid_model.read_only:
-            self.lesson_edit_requested.emit(lesson_id)
+        column = self._column_at(section)
+        if column is not None and column.kind == "lesson" and not self.grid_model.read_only:
+            self.lesson_edit_requested.emit(column.id)
 
     def _on_header_menu(self, pos: QPoint) -> None:
-        lesson_id = self._lesson_id_at(self.horizontalHeader().logicalIndexAt(pos))
-        if lesson_id is None or self.grid_model.read_only:
+        column = self._column_at(self.horizontalHeader().logicalIndexAt(pos))
+        if column is None or column.kind not in ("lesson", "thematic", "notebook") or self.grid_model.read_only:
             return
         menu = QMenu(self)
-        edit = menu.addAction("Редагувати урок")
-        delete = menu.addAction("Видалити урок")
+        if column.kind == "lesson":
+            first = menu.addAction("Редагувати урок")
+            second = menu.addAction("Видалити урок")
+        else:
+            first = menu.addAction("Перемістити…")
+            second = menu.addAction("Видалити")
         chosen = menu.exec(self.horizontalHeader().mapToGlobal(pos))
-        if chosen is edit:
-            self.lesson_edit_requested.emit(lesson_id)
-        elif chosen is delete:
-            self.lesson_delete_requested.emit(lesson_id)
+        if chosen is None:
+            return
+        if column.kind == "lesson":
+            (self.lesson_edit_requested if chosen is first else self.lesson_delete_requested).emit(column.id)
+        else:
+            (self.column_move_requested if chosen is first else self.column_delete_requested).emit(column.id)
