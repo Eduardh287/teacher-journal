@@ -36,7 +36,7 @@ from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
 from journal.ui.journal_dialogs import conflict_text
-from journal.ui.widgets import button, card, label
+from journal.ui.widgets import ElidedLabel, button, card, label
 
 COLUMNS = 3  # кількість карток у рядку
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
@@ -71,8 +71,9 @@ class _ClassCard(QFrame):
         layout.setSpacing(4)
 
         top = QHBoxLayout()
-        top.addWidget(label(info.name, object_name="CardBig"))
-        top.addStretch(1)
+        title = ElidedLabel(info.name)
+        title.setObjectName("CardBig")
+        top.addWidget(title, 1)
         if info.archived:
             top.addWidget(label("Архів", object_name="Badge"), alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(top)
@@ -82,6 +83,8 @@ class _ClassCard(QFrame):
 
         # Дочірні мітки пропускають події миші до картки: hover і клік працюють на всій площі.
         for child in self.findChildren(QLabel):
+            if isinstance(child, ElidedLabel):
+                continue  # підказка потрібна самій мітці
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -127,8 +130,9 @@ class ClassesPage(QWidget):
                 self,
                 "Клас не повернуто з архіву",
                 conflict_text(error.conflicts)
-                + "\n\nМежі семестрів цих журналів можна змінити: "
-                "Журнали → журнал → «Ще» → «Налаштування журналу».",
+                + "\n\nПісля повернення клас отримує загальні межі семестрів. "
+                "Змініть їх у «Налаштування» → «Семестри» або перенесіть чи видаліть ці уроки "
+                "в журналі (журнал архівного класу можна редагувати), а тоді поверніть клас ще раз.",
             )
             return False, None
         except Exception:
@@ -182,6 +186,7 @@ class ClassesPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.viewport().setAutoFillBackground(False)
         self.list_stack.addWidget(self.scroll)                       # 0 — картки
         self.list_stack.addWidget(self._build_empty_classes())       # 1 — порожньо
@@ -435,6 +440,7 @@ class ClassesPage(QWidget):
             number = QTableWidgetItem("вибув" if student.archived else str(student.position))
             number.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             name = QTableWidgetItem(student.full_name)
+            name.setToolTip(student.full_name)
             for item in (number, name):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 if student.archived:

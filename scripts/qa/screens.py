@@ -881,7 +881,9 @@ PAIRS = [
     ("muted", "lesson_test_soft", 4.5), ("muted", "lesson_lab_soft", 4.5), ("muted", "lesson_independent_soft", 4.5),
     ("muted", "border", 4.5), ("mark_absent", "surface", 4.5), ("mark_sick", "surface", 4.5),
     ("mark_late", "surface", 4.5), ("muted", "mark_absent_soft", 4.5), ("accent", "bg", 3.0),
-    ("border", "surface", 3.0), ("border", "input_bg", 3.0), ("accent", "input_bg", 3.0),
+    ("control_border", "surface", 3.0), ("control_border", "input_bg", 3.0),
+    ("control_border", "bg", 3.0), ("control_border", "hover", 3.0), ("accent", "input_bg", 3.0),
+    ("muted", "accent_soft", 4.5),
 ]
 CONTRAST = []
 for th in THEMES:

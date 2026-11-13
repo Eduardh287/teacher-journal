@@ -1,6 +1,16 @@
 """Невеликі будівельні блоки інтерфейсу, спільні для всіх вікон."""
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QToolTip,
+    QVBoxLayout,
+    QWidget,
+)
 
 from journal.ui import icons, theme
 
@@ -14,6 +24,40 @@ def label(text: str = "", *, object_name: str = "", muted: bool = False, wrap: b
         widget.setProperty("muted", True)
     widget.setWordWrap(wrap)
     return widget
+
+
+class ElidedLabel(QLabel):
+    """Однорядкова мітка: довгий текст обрізається «…» праворуч і не розпирає макет.
+
+    Мінімальна ширина ~0, підказка з повним текстом з'являється лише коли текст обрізано.
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, super().minimumSizeHint().height())
+
+    def is_elided(self) -> bool:
+        return self.fontMetrics().horizontalAdvance(self.text()) > self.contentsRect().width()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        rect = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect, int(self.alignment()), text)
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            if self.is_elided():
+                QToolTip.showText(event.globalPos(), self.text(), self)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().event(event)
 
 
 def button(text: str, *, variant: str = "", icon_name: str = "") -> QPushButton:

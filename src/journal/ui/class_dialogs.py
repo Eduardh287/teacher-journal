@@ -231,6 +231,7 @@ class ImportStudentsDialog(_ClassDialogBase):
         self.text_edit = QPlainTextEdit()
         self.text_edit.setPlaceholderText("1. Коваленко Олена\n2. Шевченко Іван")
         self.text_edit.setMinimumHeight(220)
+        self.text_edit.setTabChangesFocus(True)  # Tab веде до кнопок, а не вставляє табуляцію
         self.body.addWidget(self.text_edit)
 
         self.preview_label = label("", muted=True)
@@ -283,5 +284,11 @@ class ImportStudentsDialog(_ClassDialogBase):
 
 
 def _students_word(n: int) -> str:
-    """Відмінок слова «учень» після числівника (1 учня, 25 учнів)."""
-    return "учня" if n % 10 == 1 and n % 100 != 11 else "учнів"
+    """Форма слова «учень» після числівника: 1 учня, 3 і 34 учні, 5 і 12 учнів."""
+    if n % 100 in (11, 12, 13, 14):
+        return "учнів"
+    if n % 10 == 1:
+        return "учня"
+    if n % 10 in (2, 3, 4):
+        return "учні"
+    return "учнів"
