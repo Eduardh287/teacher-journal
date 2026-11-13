@@ -62,6 +62,13 @@ _FINAL_KINDS = {
 }
 
 
+# Оцінки вибулого учня очистити не можна (його рядок лише для перегляду) — підказуємо шлях (рецензія Fable).
+_WITHDRAWN_HINT = (
+    "\n\nЧастина позначок належить вибулим учням ({names}). Їхні рядки лише для перегляду: "
+    "щоб очистити ці клітинки, спершу поверніть учня до списку класу (сторінка «Класи»), "
+    "а після очищення знову позначте його вибулим."
+)
+
 class JournalService:
     def __init__(self, session: Session) -> None:
         self.repo = JournalRepository(session)
@@ -252,10 +259,14 @@ class JournalService:
         lesson = self._own_lesson(teacher_id, lesson_id)
         count = self.repo.entry_count(lesson_id)
         if count:
-            raise JournalError(
+            message = (
                 f"Урок має оцінки чи позначки ({count}) — його не можна видалити. "
                 "Спершу очистьте клітинки цього уроку."
             )
+            withdrawn = self.repo.withdrawn_with_entries(lesson_id)
+            if withdrawn:  # рядок вибулого лише для перегляду — пояснюємо, як усе ж очистити
+                message += _WITHDRAWN_HINT.format(names=", ".join(withdrawn))
+            raise JournalError(message)
         self.repo.delete(lesson)
 
     # --- стовпчики без дати ---
@@ -292,9 +303,11 @@ class JournalService:
         column = self._own_column(teacher_id, column_id)
         count = self.repo.extra_grade_counts(column.journal_id).get(column.id, 0)
         if column.kind is ExtraColumnKind.NOTEBOOK and count:
-            raise JournalError(
-                f"У стовпчику «Зошит» є оцінки ({count}) — його не можна видалити. Спершу очистьте їх."
-            )
+            message = f"У стовпчику «Зошит» є оцінки ({count}) — його не можна видалити. Спершу очистьте їх."
+            withdrawn = self.repo.withdrawn_with_extra_grades(column.id)
+            if withdrawn:
+                message += _WITHDRAWN_HINT.format(names=", ".join(withdrawn))
+            raise JournalError(message)
         self.repo.delete(column)  # оцінки стовпчика видаляє каскад
 
     # --- обчислювані клітинки ---
