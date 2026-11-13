@@ -645,3 +645,21 @@ def test_migration_backfills_anchor_lesson(session, ctx):
     session.refresh(orphan)
     assert col.after_lesson_id == max(a.id, b.id)  # останній урок цієї дати
     assert orphan.after_lesson_id is None
+
+
+def test_delete_first_lesson_of_semester2_keeps_column_in_semester2(ctx, session):
+    """Рецензія Fable (PR #16): стовпчик не «переїжджає» в І семестр і не змінює його оцінок."""
+    from datetime import date
+
+    l1 = ctx.svc.create_lesson(ctx.t.id, ctx.j.id, date(2026, 12, 1))   # І семестр
+    l2 = ctx.svc.create_lesson(ctx.t.id, ctx.j.id, date(2027, 1, 12))   # ІІ семестр
+    t = ctx.svc.create_column(ctx.t.id, ctx.j.id, "thematic", l2.id)
+    ctx.svc.set_override(ctx.t.id, ctx.j.id, ctx.s, ("thematic", t.id), 4)
+    before = ctx.svc.student_computed(ctx.t.id, ctx.j.id, ctx.s)
+    ctx.svc.delete_lesson(ctx.t.id, l2.id)
+    column = session.get(ExtraColumn, t.id)
+    assert column.semester == 2 and column.after_lesson_id is None
+    after = ctx.svc.student_computed(ctx.t.id, ctx.j.id, ctx.s)
+    assert after[("semester", 1)] == before[("semester", 1)]
+    assert after[("semester", 2)].value == 4
+    assert l1.id  # урок І семестру не зачеплено

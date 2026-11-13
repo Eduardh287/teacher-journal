@@ -283,6 +283,10 @@ class JournalService:
         ordered = self.repo.all_lessons(lesson.journal_id)
         index = next(i for i, x in enumerate(ordered) if x.id == lesson.id)
         previous = ordered[index - 1] if index else None
+        # Лише попередній урок ТОГО САМОГО семестру: інакше стовпчик «переїхав» би в інший
+        # семестр і тихо змінив семестрові оцінки (рецензія Fable, PR #16).
+        if previous is not None and previous.semester != lesson.semester:
+            previous = None
         counts = self.repo.extra_grade_counts(lesson.journal_id)
         duplicates = set()
         if previous is not None:
