@@ -1,4 +1,4 @@
-"""Скидання пароля викладачки (лише для автора, запускається локально на її комп'ютері).
+r"""Скидання пароля викладачки (лише для автора, запускається локально на її комп'ютері).
 
     python scripts\reset_password.py <логін>
 
@@ -11,6 +11,7 @@ import argparse
 import getpass
 import sys
 from collections.abc import Callable
+from typing import Any
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from journal.services.auth_service import AuthError, AuthService  # noqa: E402
 
 
-def _run_in_db(action: Callable[[AuthService], str]) -> str:
+def _run_in_db(action: Callable[[AuthService], Any]) -> Any:
     from journal.db import session_scope
 
     with session_scope() as session:
@@ -39,7 +40,7 @@ class _QuietParser(argparse.ArgumentParser):
 def main(
     argv: list[str] | None = None,
     ask_password: Callable[[str], str] = getpass.getpass,
-    run: Callable[[Callable[[AuthService], str]], str] = _run_in_db,
+    run: Callable[[Callable[[AuthService], Any]], Any] = _run_in_db,
     out: Callable[[str], None] = print,
 ) -> int:
     parser = _QuietParser(
@@ -47,6 +48,15 @@ def main(
     )
     parser.add_argument("username", help="логін викладачки")
     args = parser.parse_args(argv)  # будь-які інші аргументи (зокрема пароль) — помилка
+
+    try:
+        exists = run(lambda auth: auth.has_teacher(args.username))
+    except Exception as error:
+        out(f"Не вдалося зв'язатися з базою даних ({type(error).__name__}). Журнал закрито?")
+        return 2
+    if not exists:
+        out("Користувача не знайдено.")
+        return 1
 
     password = ask_password("Новий пароль: ")
     if password != ask_password("Повторіть пароль: "):

@@ -98,3 +98,15 @@ def test_refuses_password_from_argv(extra):
     assert result.returncode != 0
     assert NEW_PASSWORD not in result.stdout
     assert NEW_PASSWORD not in result.stderr
+
+
+def test_unknown_login_checked_before_password_prompt(script, session):
+    def must_not_ask(prompt):
+        raise AssertionError("пароль не мав запитуватись")
+
+    output = []
+    code = script.main(
+        ["pytest_nobody"], must_not_ask, lambda action: action(AuthService(session)), output.append
+    )
+    assert code == 1
+    assert output == ["Користувача не знайдено."]

@@ -362,12 +362,15 @@ def test_admin_reset_unknown_user(auth):
 def test_logs_never_contain_secrets(auth, teacher, caplog):
     caplog.set_level("DEBUG")
     fail(auth, times=2)
+    fail(auth, "pytest_ghost")
     with pytest.raises(AuthError):
         auth.reset_with_recovery_code("pytest_sec", "AAAA-AAAA-AAAA-AAAA", NEW_PASSWORD)
     with pytest.raises(AuthError):
         auth.change_password(teacher[0].id, "wrong-current", NEW_PASSWORD)
     text = caplog.text
-    assert "failed login for pytest_sec" in text
+    assert f"failed login for teacher id={teacher[0].id}" in text
+    assert "failed login for unknown user" in text
+    assert "pytest_sec" not in text and "pytest_ghost" not in text
     for secret in ("wrong-password", "wrong-current", NEW_PASSWORD, PASSWORD, teacher[1], "argon2"):
         assert secret not in text
 

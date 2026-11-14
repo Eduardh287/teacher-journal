@@ -162,7 +162,11 @@ class AuthService:
         state.failed_attempts = (state.failed_attempts or 0) + 1
         delay = lock_seconds_for(state.failed_attempts)
         state.locked_until = self._clock() + timedelta(seconds=delay) if delay else None
-        log.warning("failed login for %s (attempt %d)", username.strip(), state.failed_attempts)
+        # У журнал — лише id існуючого викладача або константа: введений логін не логуємо.
+        if isinstance(state, Teacher):
+            log.warning("failed login for teacher id=%s (attempt %d)", state.id, state.failed_attempts)
+        else:
+            log.warning("failed login for unknown user")
 
     @staticmethod
     def _reset_state(state: _Throttle | Teacher) -> None:
@@ -256,6 +260,9 @@ class AuthService:
             raise AuthFailed(BAD_RECOVERY)
         self._reset_state(teacher)
         return self._set_password(teacher, new_password)
+
+    def has_teacher(self, username: str) -> bool:
+        return self.teachers.get_by_username(username.strip()) is not None
 
     def ensure_recovery_code(self, teacher_id: int) -> str | None:
         """Для облікового запису без коду (створеного до етапу 7b) видає код; інакше None."""
