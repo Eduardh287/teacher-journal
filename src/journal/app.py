@@ -11,6 +11,7 @@ from journal.db import session_scope
 from journal.logging_setup import install_excepthook, setup_logging
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
+from journal.ui.backup_dialogs import default_exit_backup
 from journal.ui.main_window import MainWindow
 from journal.ui.rollover_dialog import maybe_run_rollover
 from journal.ui.theme import apply_theme, load_theme_name
@@ -78,7 +79,7 @@ def main() -> None:
     if dialog.exec() != QDialog.DialogCode.Accepted:
         sys.exit(0)
 
-    window = MainWindow(dialog.current_user)
+    window = MainWindow(dialog.current_user, exit_backup=default_exit_backup)
     window.show()
     teacher_id = dialog.current_user.id
     QTimer.singleShot(0, lambda: maybe_run_rollover(window, teacher_id))

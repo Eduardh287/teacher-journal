@@ -22,7 +22,7 @@ from journal.services.auth_service import CurrentUser
 from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
 from journal.ui.journals_page import JournalsPage
-from journal.ui.settings_cards import SemestersCard, SubjectsCard
+from journal.ui.settings_cards import BackupsCard, SemestersCard, SubjectsCard
 from journal.ui.widgets import brand_mark, button, card, label
 
 # (іконка, підпис у меню)
@@ -37,9 +37,16 @@ def initials(full_name: str) -> str:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, current_user: CurrentUser) -> None:
+    def __init__(
+        self,
+        current_user: CurrentUser,
+        exit_backup: Callable[[QWidget], None] | None = None,
+    ) -> None:
         super().__init__()
         self.current_user = current_user
+        # Автокопія при закритті (етап 7a): передає app.py; у тестах за замовчуванням її немає.
+        self._exit_backup = exit_backup
+        self._exit_backup_done = False
         self.setWindowTitle(f"Електронний журнал — {current_user.full_name}")
         self.setMinimumSize(1100, 700)
 
@@ -69,7 +76,7 @@ class MainWindow(QMainWindow):
 
         quit_action = QAction("Вийти", self)
         quit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        quit_action.triggered.connect(QApplication.quit)
+        quit_action.triggered.connect(self.close)
         self.addAction(quit_action)
 
         self._refresh_icons()
@@ -139,7 +146,7 @@ class MainWindow(QMainWindow):
 
         logout = button("Вийти", variant="ghost")
         logout.setToolTip("Закрити застосунок (Ctrl+Q)")
-        logout.clicked.connect(QApplication.quit)
+        logout.clicked.connect(self.close)
         self._icon_refreshers.append(
             lambda: logout.setIcon(icons.icon("logout", theme.color("muted"), size=16))
         )
@@ -205,7 +212,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_settings_page(self) -> QWidget:
-        page, layout = self._page("Налаштування", "Вигляд застосунку, семестри та довідник предметів.")
+        page, layout = self._page("Налаштування", "Вигляд застосунку, семестри, довідник предметів і резервні копії.")
 
         # Заголовок і підзаголовок нерухомі; три картки прокручуються, щоб помилки
         # й списки конфліктів не стискали поля.
@@ -248,6 +255,8 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(self.semesters_card)
         self.subjects_card = SubjectsCard(on_changed=lambda: self.journals_page.refresh())
         body_layout.addWidget(self.subjects_card)
+        self.backups_card = BackupsCard(on_restored=self._close_after_restore)
+        body_layout.addWidget(self.backups_card)
         body_layout.addStretch(1)
 
         self.settings_scroll = QScrollArea()
@@ -257,6 +266,24 @@ class MainWindow(QMainWindow):
         self.settings_scroll.setWidget(body)
         layout.addWidget(self.settings_scroll, 1)
         return page
+
+    # ---------- Закриття та резервні копії ----------
+
+    def _close_after_restore(self) -> None:
+        """Після відновлення з копії програма закривається без автокопії (дані щойно замінено)."""
+        self._exit_backup_done = True
+        self.close()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        if self._exit_backup is not None and not self._exit_backup_done:
+            self._exit_backup_done = True
+            try:
+                self._exit_backup(self)
+            except Exception:  # noqa: BLE001 — програма ніколи не мусить «застрягти» на виході
+                import logging
+
+                logging.exception("Помилка автоматичної копії при виході")
+        super().closeEvent(event)
 
     # ---------- Тема ----------
 

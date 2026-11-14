@@ -175,3 +175,64 @@ def test_missing_pgsql_dir_gives_clear_error(tmp_path):
     layout = e.resolve_layout(tmp_path / "root")
     with pytest.raises(e.EmbeddedDbError):
         e.EmbeddedDb(layout, pg_root=tmp_path / "nope")
+
+
+# ---------------------------------------------------------------- копія перед міграцією (етап 7a)
+
+def _fake_service(monkeypatch, created, error=None):
+    from journal.services import backup_service
+
+    class FakeService:
+        def __init__(self, url, **kw):
+            created.append(("init", kw["default_dir"]))
+
+        def create_backup(self, kind, **kw):
+            if error:
+                raise error
+            created.append((kind, kw))
+            return Path("x.dump")
+
+    monkeypatch.setattr(backup_service, "BackupService", FakeService)
+
+
+def test_backup_before_migration_for_old_schema(monkeypatch, tmp_path):
+    monkeypatch.setenv("JOURNAL_DATA_DIR", str(tmp_path))
+    created = []
+    _fake_service(monkeypatch, created)
+    monkeypatch.setattr(e, "current_revision", lambda url: "old")
+    monkeypatch.setattr(e, "script_head", lambda: "new")
+    e.backup_before_migration("postgresql+psycopg://u:p@h/db")
+    assert ("before-migration", {"default_folder_only": True}) in created
+    assert created[0] == ("init", tmp_path / "backups")
+
+
+@pytest.mark.parametrize("revision", [None, "new"])
+def test_no_backup_for_fresh_or_current_schema(monkeypatch, revision):
+    created = []
+    _fake_service(monkeypatch, created)
+    monkeypatch.setattr(e, "current_revision", lambda url: revision)
+    monkeypatch.setattr(e, "script_head", lambda: "new")
+    e.backup_before_migration("postgresql+psycopg://u:p@h/db")
+    assert created == []
+
+
+def test_no_alembic_table_means_no_backup(monkeypatch):
+    created = []
+    _fake_service(monkeypatch, created)
+
+    def boom(url):
+        raise RuntimeError("relation does not exist")
+
+    monkeypatch.setattr(e, "current_revision", boom)
+    e.backup_before_migration("postgresql+psycopg://u:p@h/db")
+    assert created == []
+
+
+def test_failed_backup_blocks_migration(monkeypatch):
+    from journal.services.backup_service import BackupError
+
+    _fake_service(monkeypatch, [], error=BackupError("Диск повний."))
+    monkeypatch.setattr(e, "current_revision", lambda url: "old")
+    monkeypatch.setattr(e, "script_head", lambda: "new")
+    with pytest.raises(e.EmbeddedDbError, match="оновлення не виконано"):
+        e.backup_before_migration("postgresql+psycopg://u:p@h/db")

@@ -355,24 +355,34 @@ class CommentDialog(QDialog):
 class _TypedConfirmDialog(QDialog):
     """Підтвердження словом: кнопка «Видалити» активується лише після введення «видалити»."""
 
-    def __init__(self, window_title: str, heading: str, text: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        window_title: str,
+        heading: str,
+        text: str,
+        parent: QWidget | None = None,
+        *,
+        word: str = DELETE_WORD,
+        confirm_text: str = "Видалити",
+    ) -> None:
         super().__init__(parent)
+        self._word = word
         self.setWindowTitle(window_title)
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(14)
         layout.addWidget(label(heading, object_name="EmptyTitle"))
-        layout.addWidget(label(f"{text} Щоб підтвердити, введіть «{DELETE_WORD}».", wrap=True))
+        layout.addWidget(label(f"{text} Щоб підтвердити, введіть «{word}».", wrap=True))
         self.confirm_edit = QLineEdit()
-        self.confirm_edit.setPlaceholderText(DELETE_WORD)
+        self.confirm_edit.setPlaceholderText(word)
         self.confirm_edit.textChanged.connect(self._update)
         layout.addWidget(self.confirm_edit)
         row = QHBoxLayout()
         cancel = button("Скасувати")
         cancel.setDefault(True)
         cancel.clicked.connect(self.reject)
-        self.delete_button = button("Видалити")
+        self.delete_button = button(confirm_text)
         self.delete_button.setEnabled(False)
         self.delete_button.clicked.connect(self.accept)
         row.addStretch(1)
@@ -381,7 +391,7 @@ class _TypedConfirmDialog(QDialog):
         layout.addLayout(row)
 
     def _update(self, text: str) -> None:
-        self.delete_button.setEnabled(text.strip().lower() == DELETE_WORD)
+        self.delete_button.setEnabled(text.strip().lower() == self._word)
 
 
 class DeleteLessonDialog(_TypedConfirmDialog):

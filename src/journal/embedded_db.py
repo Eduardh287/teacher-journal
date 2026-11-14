@@ -408,8 +408,19 @@ def upgrade_schema(url: str) -> None:
     cfg.set_main_option("script_location", str(res / "migrations"))
     cfg.attributes["database_url"] = url
     cfg.attributes["skip_logging_config"] = True
-    log.info("Міграції: alembic upgrade head (резервну копію перед міграцією додасть етап 8b)")
+    log.info("Міграції: alembic upgrade head")
     command.upgrade(cfg, "head")
+
+
+def script_head() -> str | None:
+    """Остання ревізія міграцій, що лежать у складі застосунку."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    res = resource_dir()
+    cfg = Config(str(res / "alembic.ini"))
+    cfg.set_main_option("script_location", str(res / "migrations"))
+    return ScriptDirectory.from_config(cfg).get_current_head()
 
 
 def current_revision(url: str) -> str | None:
@@ -420,6 +431,36 @@ def current_revision(url: str) -> str | None:
     with psycopg.connect(dsn, connect_timeout=10) as conn:
         row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     return row[0] if row else None
+
+
+def backup_before_migration(url: str) -> None:
+    """Якщо схема стара — копія `before-migration` у типову папку; без копії міграції не буде.
+
+    Нова (порожня) база копії не потребує. Помилка копії -> EmbeddedDbError.
+    """
+    try:
+        revision = current_revision(url)
+    except Exception:  # noqa: BLE001 — немає таблиці alembic_version: база ще не мігрована
+        revision = None
+    if revision is None or revision == script_head():
+        return
+    from journal.services.backup_service import BackupError, BackupService
+
+    root = pgsql_dir()
+    service = BackupService(
+        url,
+        pg_bin=(ascii_safe(root) or root) / "bin",
+        default_dir=requested_root() / "backups",
+    )
+    try:
+        path = service.create_backup("before-migration", default_folder_only=True)
+    except BackupError as error:
+        log.error("Копія перед міграцією не створена: %s", error)
+        raise EmbeddedDbError(
+            "Не вдалося створити резервну копію перед оновленням бази, тому оновлення не виконано. "
+            f"{error} Дані не змінено."
+        ) from None
+    log.info("Копія перед міграцією: %s", path.name)
 
 
 # ---------------------------------------------------------------- публічний API
@@ -436,6 +477,7 @@ def ensure_running() -> str:
     db = EmbeddedDb(layout)
     try:
         url = db.ensure_running()
+        backup_before_migration(url)
         upgrade_schema(url)
     except BaseException:
         try:
