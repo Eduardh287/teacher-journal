@@ -17,7 +17,7 @@ def auth(session) -> AuthService:
 
 
 def test_register_returns_current_user(auth):
-    user = auth.register("pytest_reg1", PASSWORD, "Іван Петренко")
+    user, _code = auth.register("pytest_reg1", PASSWORD, "Іван Петренко")
 
     assert isinstance(user, CurrentUser)
     assert isinstance(user.id, int)
@@ -26,7 +26,7 @@ def test_register_returns_current_user(auth):
 
 
 def test_register_stores_argon2_hash_not_plain_password(auth, session):
-    user = auth.register("pytest_hash1", PASSWORD, "Олена Коваль")
+    user, _code = auth.register("pytest_hash1", PASSWORD, "Олена Коваль")
 
     teacher = session.get(Teacher, user.id)
     assert teacher is not None
@@ -35,7 +35,7 @@ def test_register_stores_argon2_hash_not_plain_password(auth, session):
 
 
 def test_register_strips_spaces_from_username_and_full_name(auth, session):
-    user = auth.register("  pytest_strip  ", PASSWORD, "  Марія Савчук  ")
+    user, _code = auth.register("  pytest_strip  ", PASSWORD, "  Марія Савчук  ")
 
     assert user.username == "pytest_strip"
     assert user.full_name == "Марія Савчук"
@@ -81,7 +81,7 @@ def test_register_rejects_duplicate_username_differing_only_by_case(auth):
 
 
 def test_authenticate_correct_password_returns_same_user(auth):
-    registered = auth.register("pytest_login1", PASSWORD, "Вхід Перший")
+    registered, _code = auth.register("pytest_login1", PASSWORD, "Вхід Перший")
 
     user = auth.authenticate("pytest_login1", PASSWORD)
 
@@ -90,7 +90,7 @@ def test_authenticate_correct_password_returns_same_user(auth):
 
 
 def test_authenticate_is_case_insensitive_for_username(auth):
-    registered = auth.register("pytest_LoginCase", PASSWORD, "Вхід Другий")
+    registered, _code = auth.register("pytest_LoginCase", PASSWORD, "Вхід Другий")
 
     user = auth.authenticate("PYTEST_logincase", PASSWORD)
 

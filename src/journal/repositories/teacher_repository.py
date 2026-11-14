@@ -12,6 +12,9 @@ class TeacherRepository:
     def count(self) -> int:
         return self.session.scalar(select(func.count()).select_from(Teacher)) or 0
 
+    def get(self, teacher_id: int) -> Teacher | None:
+        return self.session.get(Teacher, teacher_id)
+
     def get_by_username(self, username: str) -> Teacher | None:
         return self.session.scalars(
             select(Teacher).where(func.lower(Teacher.username) == username.lower())

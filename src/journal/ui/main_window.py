@@ -22,7 +22,7 @@ from journal.services.auth_service import CurrentUser
 from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
 from journal.ui.journals_page import JournalsPage
-from journal.ui.settings_cards import BackupsCard, SemestersCard, SubjectsCard
+from journal.ui.settings_cards import AccountCard, BackupsCard, SemestersCard, SubjectsCard
 from journal.ui.widgets import brand_mark, button, card, label
 
 # (іконка, підпис у меню)
@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_settings_page(self) -> QWidget:
-        page, layout = self._page("Налаштування", "Вигляд застосунку, семестри, довідник предметів і резервні копії.")
+        page, layout = self._page("Налаштування", "Вигляд застосунку, семестри, довідник предметів, обліковий запис і резервні копії.")
 
         # Заголовок і підзаголовок нерухомі; три картки прокручуються, щоб помилки
         # й списки конфліктів не стискали поля.
@@ -255,6 +255,8 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(self.semesters_card)
         self.subjects_card = SubjectsCard(on_changed=lambda: self.journals_page.refresh())
         body_layout.addWidget(self.subjects_card)
+        self.account_card = AccountCard(self.current_user.id)
+        body_layout.addWidget(self.account_card)
         self.backups_card = BackupsCard(on_restored=self._close_after_restore)
         body_layout.addWidget(self.backups_card)
         body_layout.addStretch(1)

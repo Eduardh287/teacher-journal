@@ -26,7 +26,8 @@ from journal.services.semesters import (
     SemesterError,
 )
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
-from journal.ui import backup_dialogs
+from journal.services.auth_service import AuthError
+from journal.ui import auth_dialogs, backup_dialogs
 from journal.ui.theme import app_settings
 from journal.ui.widgets import ElidedLabel, button, label
 
@@ -480,3 +481,85 @@ class BackupsCard(QFrame):
             self, "Дані відновлено", "Дані відновлено. Програма закриється — відкрийте її знову."
         )
         self._on_restored()
+
+
+# ---------------------------------------------------------------- обліковий запис (етап 7b)
+
+class AccountCard(QFrame):
+    """Зміна пароля: поточний + новий + повтор. Після успіху показує новий код відновлення."""
+
+    def __init__(
+        self,
+        teacher_id: int,
+        runner: Callable[[Callable], object] | None = None,
+        show_code: Callable[[QWidget | None, str], None] | None = None,
+    ) -> None:
+        super().__init__()
+        self.teacher_id = teacher_id
+        self._runner = runner or auth_dialogs.run_auth_action
+        self._show_code = show_code or auth_dialogs.show_recovery_code
+
+        self.setObjectName("Card")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        layout.addWidget(label("Обліковий запис", object_name="CardTitle"))
+        layout.addWidget(
+            label(
+                "Після зміни пароля програма покаже новий код відновлення. Старий код перестане діяти.",
+                muted=True,
+                wrap=True,
+            )
+        )
+        self.current_edit = self._password_edit("Поточний пароль")
+        self.new_edit = self._password_edit("Новий пароль (щонайменше 8 символів)")
+        self.repeat_edit = self._password_edit("Новий пароль ще раз")
+        for edit in (self.current_edit, self.new_edit, self.repeat_edit):
+            layout.addWidget(edit)
+
+        actions = QHBoxLayout()
+        self.change_button = button("Змінити пароль", variant="primary")
+        self.change_button.clicked.connect(self._on_change)
+        actions.addWidget(self.change_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.status = label("", muted=True, wrap=True)
+        self.status.hide()
+        layout.addWidget(self.status)
+        self.error = _error_label()
+        layout.addWidget(self.error)
+
+    @staticmethod
+    def _password_edit(placeholder: str) -> QLineEdit:
+        edit = QLineEdit()
+        edit.setPlaceholderText(placeholder)
+        edit.setEchoMode(QLineEdit.EchoMode.Password)
+        return edit
+
+    def _show_error(self, text: str) -> None:
+        self.status.hide()
+        self.error.setText(text)
+        self.error.show()
+
+    def _on_change(self) -> None:
+        current, new = self.current_edit.text(), self.new_edit.text()
+        if new != self.repeat_edit.text():
+            self._show_error("Нові паролі не збігаються")
+            return
+        try:
+            code = self._runner(lambda auth: auth.change_password(self.teacher_id, current, new))
+        except AuthError as error:
+            self._show_error(str(error))
+            self.current_edit.clear()
+            return
+        except Exception:
+            logging.exception("Не вдалося змінити пароль")
+            self._show_error(GENERIC_ERROR)
+            return
+        for edit in (self.current_edit, self.new_edit, self.repeat_edit):
+            edit.clear()
+        self.error.hide()
+        self.status.setText("Пароль змінено.")
+        self.status.show()
+        self._show_code(self, code)

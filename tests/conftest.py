@@ -52,6 +52,16 @@ def isolated_user_data(tmp_path, monkeypatch):
         QSettings.setDefaultFormat(previous)
 
 
+@pytest.fixture(autouse=True)
+def clean_unknown_login_state():
+    """Лічильники невдач для неіснуючих логінів — у пам'яті процесу; між тестами скидаємо."""
+    from journal.services import auth_service
+
+    auth_service._unknown_state.clear()
+    yield
+    auth_service._unknown_state.clear()
+
+
 @pytest.fixture
 def session(engine):
     """Сесія в SAVEPOINT-режимі: зовнішня транзакція відкочується, дані в БД не лишаються."""
