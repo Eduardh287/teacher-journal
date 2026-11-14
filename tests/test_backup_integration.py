@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, text
 
 from journal import db, embedded_db
 from journal.config import get_test_database_url
-from journal.services.backup_service import BackupError, BackupService, RestoreFailed
+from journal.services.backup_service import BackupService, RestoreFailed
 
 PG_BIN = embedded_db.pgsql_dir() / "bin"
 
@@ -51,13 +51,15 @@ def test_engine():
         engine.dispose()
 
 
-def make_service(tmp_path: Path, folder_name: str) -> BackupService:
+def make_service(tmp_path: Path, folder_name: str, **kw) -> BackupService:
     folder = tmp_path / folder_name
     return BackupService(
         get_test_database_url(),
         pg_bin=PG_BIN,
         default_dir=folder,
         dispose_engine=lambda: db.get_engine().dispose(),
+        marker_path=tmp_path / "restore-in-progress",
+        **kw,
     )
 
 
@@ -83,19 +85,24 @@ def test_dump_modify_restore_roundtrip(tmp_path, test_engine, folder_name):
 
 
 def test_restore_failure_is_rolled_back_to_previous_state(tmp_path, test_engine):
-    service = make_service(tmp_path, "backups")
+    calls = []
+
+    def flaky_upgrade(url: str) -> None:
+        calls.append(url)
+        if len(calls) == 1:  # перше завантаження (з вибраної копії) падає після pg_restore
+            raise RuntimeError("simulated migration failure")
+        embedded_db.upgrade_schema(url)
+
+    service = make_service(tmp_path, "backups", upgrade_schema=flaky_upgrade)
     add_teacher(test_engine, PROBE)
     good = service.create_backup("manual")
     add_teacher(test_engine, CHANGED)  # поточний стан, який має вціліти після невдалого відновлення
 
-    broken = good.with_name("journal_2026-01-01_00-00-00_manual.dump")
-    data = good.read_bytes()
-    broken.write_bytes(data[: len(data) // 2] + b"\x00garbage" * 50)  # обрізана копія
-    # inspect може пройти (TOC цілий), а завантаження — впасти; у будь-якому разі стан не втрачається
-    with pytest.raises(BackupError) as caught:
-        service.restore(broken)
-    if isinstance(caught.value, RestoreFailed):
-        assert caught.value.rolled_back
+    with pytest.raises(RestoreFailed) as caught:
+        service.restore(good)
+    assert caught.value.rolled_back is True
+    assert len(calls) == 2
+    assert not service.marker_path.exists()
     test_engine.dispose()
     assert usernames(test_engine) == {PROBE, CHANGED}
     assert embedded_db.current_revision(get_test_database_url()) == embedded_db.script_head()

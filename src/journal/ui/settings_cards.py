@@ -271,6 +271,7 @@ class SubjectsCard(QFrame):
 
 BACKUP_DIR_KEY = "backup_dir"
 NO_BACKUPS_TEXT = "Копій ще немає"
+FALLBACK_NOTE = "Обрана папка недоступна — копії зберігаються в типовій"
 
 
 def load_backup_dir() -> str | None:
@@ -330,6 +331,9 @@ class BackupsCard(QFrame):
         layout.addWidget(self.folder_label)
         self.latest_label = label("", muted=True, wrap=True)
         layout.addWidget(self.latest_label)
+        self.fallback_note = label(FALLBACK_NOTE, muted=True, wrap=True)
+        self.fallback_note.hide()
+        layout.addWidget(self.fallback_note)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -377,9 +381,11 @@ class BackupsCard(QFrame):
             logging.exception("Не вдалося прочитати список резервних копій")
             self.folder_label.setText("")
             self.latest_label.setText("Не вдалося прочитати список копій")
+            self.fallback_note.hide()
             return
         self.folder_label.setText(f"Папка: {folder}")
         self.folder_label.setToolTip(str(folder))
+        self.fallback_note.setVisible(bool(getattr(service, "fallback_used", False)))
         if backups:
             newest = backups[0]
             self.latest_label.setText(

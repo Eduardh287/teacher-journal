@@ -11,7 +11,7 @@ from journal.db import session_scope
 from journal.logging_setup import install_excepthook, setup_logging
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
-from journal.ui.backup_dialogs import default_exit_backup
+from journal.ui.backup_dialogs import default_exit_backup, recover_interrupted_restore
 from journal.ui.main_window import MainWindow
 from journal.ui.rollover_dialog import maybe_run_rollover
 from journal.ui.theme import apply_theme, load_theme_name
@@ -56,6 +56,9 @@ def main() -> None:
     try:
         if embedded_db.is_bundled_mode():
             embedded_db.ensure_running()
+        # До першого запиту: після обірваного відновлення таблиць може не бути зовсім.
+        if recover_interrupted_restore():
+            sys.exit(0)
         with session_scope() as session:
             first_run = not AuthService(session).has_any_teacher()
     except embedded_db.EmbeddedDbError as error:

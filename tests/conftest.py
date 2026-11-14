@@ -34,6 +34,24 @@ def engine():
     test_engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_data(tmp_path, monkeypatch):
+    """Жоден тест не читає й не пише справжні %LOCALAPPDATA% та QSettings (папка копій тощо)."""
+    from PySide6.QtCore import QSettings
+
+    monkeypatch.setenv("JOURNAL_DATA_DIR", str(tmp_path / "journal-data"))
+    previous = QSettings.defaultFormat()
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "qsettings"))
+    from journal.ui import settings_cards
+
+    monkeypatch.setattr(settings_cards, "load_backup_dir", lambda: None)
+    try:
+        yield
+    finally:
+        QSettings.setDefaultFormat(previous)
+
+
 @pytest.fixture
 def session(engine):
     """Сесія в SAVEPOINT-режимі: зовнішня транзакція відкочується, дані в БД не лишаються."""

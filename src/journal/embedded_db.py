@@ -438,10 +438,18 @@ def backup_before_migration(url: str) -> None:
 
     Нова (порожня) база копії не потребує. Помилка копії -> EmbeddedDbError.
     """
+    import psycopg.errors
+
     try:
         revision = current_revision(url)
-    except Exception:  # noqa: BLE001 — немає таблиці alembic_version: база ще не мігрована
+    except psycopg.errors.UndefinedTable:  # немає таблиці alembic_version: база ще не мігрована
         revision = None
+    except Exception:  # noqa: BLE001 — не знаємо стану бази: міграцію не починаємо
+        log.error("Не вдалося перевірити версію бази перед міграцією", exc_info=True)
+        raise EmbeddedDbError(
+            "Не вдалося перевірити версію бази даних перед оновленням, тому оновлення не виконано. "
+            "Деталі — у журналі. Дані не змінено."
+        ) from None
     if revision is None or revision == script_head():
         return
     from journal.services.backup_service import BackupError, BackupService

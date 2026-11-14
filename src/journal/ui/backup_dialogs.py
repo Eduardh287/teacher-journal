@@ -70,7 +70,8 @@ def show_warning(parent: QWidget | None, title: str, text: str) -> None:
 
 
 def default_exit_backup(parent: QWidget | None) -> None:
-    """Автоматична копія при закритті вікна. Помилка — попередження, застосунок усе одно закривається."""
+    """Автоматична копія при закритті вікна (до 60 с). Помилка чи тайм-аут — попередження,
+    застосунок усе одно закривається."""
     from journal.services.backup_service import BackupError, BackupService
     from journal.ui.settings_cards import load_backup_dir
 
@@ -89,3 +90,42 @@ def default_exit_backup(parent: QWidget | None) -> None:
             "Резервна копія",
             "Не вдалося створити резервну копію. Деталі — у журналі.\nПрограма все одно закриється.",
         )
+
+
+def ask_recover_interrupted(parent: QWidget | None = None) -> bool:
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle("Відновлення не завершилося")
+    box.setText("Минулого разу відновлення даних не завершилося. Повернути дані, які були до нього?")
+    yes = box.addButton("Повернути", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Пізніше", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    return box.clickedButton() is yes
+
+
+def recover_interrupted_restore(
+    service_factory: Callable[[], object] | None = None,
+    ask: Callable[[QWidget | None], bool] = ask_recover_interrupted,
+) -> bool:
+    """На старті: якщо минуле відновлення обірвалося — пропонує повернути дані.
+
+    True — дані повернуто і програму треба закрити (викладачка відкриє її знову).
+    Помилки не заважають запуску.
+    """
+    from journal.services.backup_service import BackupError, BackupService
+
+    try:
+        service = (service_factory or BackupService.for_app)()
+        copy = service.interrupted_restore_copy()
+        if copy is None or not ask(None):
+            return False
+        run_busy(None, "Повертаю дані…", lambda: service.recover_interrupted_restore(copy))
+    except BackupError as error:
+        logging.error("Не вдалося повернути дані після обірваного відновлення: %s", error)
+        show_warning(None, "Відновлення", str(error))
+        return False
+    except Exception:
+        logging.exception("Перевірка незавершеного відновлення не вдалася")
+        return False
+    show_info(None, "Відновлення", "Дані повернуто. Відкрийте програму знову.")
+    return True
