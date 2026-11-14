@@ -102,6 +102,7 @@ QLabel#Avatar { background: $accent_soft; color: $accent; border-radius: 18px; f
 /* Заголовки та текст */
 QLabel#AppTitle { font-size: 16pt; font-weight: 600; }
 QLabel#PageTitle { font-size: 18pt; font-weight: 600; }
+QLabel#RecoveryCode { font-family: Consolas, "Cascadia Mono", monospace; font-size: 20pt; font-weight: 600; background: $accent_soft; color: $accent; border-radius: 10px; padding: 16px 12px; }
 QLabel#CardTitle { font-size: 11pt; font-weight: 600; }
 QLabel#EmptyTitle { font-size: 12pt; font-weight: 600; }
 QLabel[muted="true"] { color: $muted; }

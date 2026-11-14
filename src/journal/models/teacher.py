@@ -1,4 +1,6 @@
-from sqlalchemy import CheckConstraint, SmallInteger, String
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from journal.models.base import Base, TimestampMixin
@@ -17,6 +19,11 @@ class Teacher(TimestampMixin, Base):
     username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(150))
+    # Захист від підбору пароля (етап 7b): лічильник невдач і час, до якого вхід заблоковано (UTC).
+    failed_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Лише хеш Argon2 коду відновлення; сам код не зберігається.
+    recovery_code_hash: Mapped[str | None] = mapped_column(String(255))
     # Глобальні межі семестрів (місяці 1-12); за замовчуванням I: вересень-грудень, II: січень-червень.
     s1_start_month: Mapped[int] = mapped_column(SmallInteger, default=9, server_default="9")
     s1_end_month: Mapped[int] = mapped_column(SmallInteger, default=12, server_default="12")
