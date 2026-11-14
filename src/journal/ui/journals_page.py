@@ -46,6 +46,7 @@ from journal.services.journal_types import (
     semester_for_date,
 )
 from journal.ui import icons, theme
+from journal.ui import export_dialog
 from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
@@ -334,6 +335,10 @@ class JournalsPage(QWidget):
             lambda: self.new_lesson_btn.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
         )
         bar.addWidget(self.new_lesson_btn)
+        self.export_btn = button("Експорт в Excel…")
+        self.export_btn.setToolTip("Зберегти таблицю оцінок за обраний період у файл Excel")
+        self.export_btn.clicked.connect(self._on_export)
+        bar.addWidget(self.export_btn)
         self.menu_btn = button("Ще")
         menu = QMenu(self.menu_btn)
         self.settings_action = menu.addAction("Налаштування журналу")
@@ -705,6 +710,11 @@ class JournalsPage(QWidget):
         ok, _ = self._call(lambda api: api.delete_lesson(self.teacher_id, lesson_id), banner=True, inform=True)
         if ok:
             self.reload_grid()
+
+    def _on_export(self) -> None:
+        if self._grid is None:
+            return
+        export_dialog.export_journal(self, self._api_factory, self.teacher_id, self._grid.journal)
 
     def _on_journal_settings(self) -> None:
         """«Налаштування журналу»: межі семестрів (змінюються лише для архівного класу)."""

@@ -20,6 +20,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from journal.services.grid_text import (  # noqa: F401 (реекспорт для ui)
+    EXTRA_COLUMN_TYPES,
+    FINAL_COLUMN_TITLES,
+    LESSON_TYPES,
+)
 from journal.services.journal_types import (
     MAX_COMMENT,
     MAX_HOMEWORK,
@@ -43,27 +48,6 @@ SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
 DELETE_WORD = "видалити"
 DATELESS_HINT = "Для «Тематичної» і «Зошита» дата, тема й д/з не вказуються"
 NO_LESSONS_TEXT = "Спершу створіть урок у цьому семестрі"
-
-# Тип уроку: код -> (назва, скорочення в заголовку стовпця)
-LESSON_TYPES: dict[str, tuple[str, str]] = {
-    "regular": ("Звичайний урок", ""),
-    "test": ("Контрольна робота", "КР"),
-    "lab": ("Лабораторна робота", "ЛР"),
-    "independent": ("Самостійна робота", "СР"),
-    "quiz": ("Тест", "Т"),  # етап 6, відгук викладачки
-    "project": ("Проєкт", "Пр"),
-}
-
-# Стовпчики без дати (етап 6): назва, скорочення в заголовку (погоджено з викладачкою).
-EXTRA_COLUMN_TYPES: dict[str, tuple[str, str]] = {
-    "thematic": ("Тематична", "Тем"),
-    "notebook": ("Зошит", "Зош"),
-}
-FINAL_COLUMN_TITLES: dict[str, tuple[str, str]] = {
-    "semester": ("Семестрова", "Сем."),
-    "annual": ("Річна", "Річна"),
-}
-
 
 class _ApiDialog(QDialog):
     """Основа: заголовок, рядок помилки й безпечний виклик сервісу журналів."""
