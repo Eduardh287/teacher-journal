@@ -34,6 +34,10 @@ _NAME_RE = re.compile(
 _TIME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 _COPY_HEADER = re.compile(r"^COPY\s+\S*alembic_version\b.*FROM stdin;\s*$", re.IGNORECASE)
 TOOL_TIMEOUT_SEC = 600
+AUTO_TOOL_TIMEOUT_SEC = 60  # копія при виході не має утримувати викладачку довго
+RESTORE_MARKER_NAME = "restore-in-progress"
+
+UNKNOWN_REVISION_TEXT = "Цю копію створено іншою або новішою версією програми — відновити її не можна."
 
 KIND_TITLES = {
     "auto": "автоматична",
@@ -87,6 +91,7 @@ def subprocess_runner(
     env: dict[str, str],
     stdin: BinaryIO | None = None,
     stdout: BinaryIO | None = None,
+    timeout: float = TOOL_TIMEOUT_SEC,
 ) -> RunResult:
     """Єдине місце, де запускаються pg_dump/pg_restore. Тести підміняють його фейком."""
     proc = subprocess.run(
@@ -96,7 +101,7 @@ def subprocess_runner(
         stdout=stdout if stdout is not None else subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=embedded_db._CREATE_NO_WINDOW,
-        timeout=TOOL_TIMEOUT_SEC,
+        timeout=timeout,
         check=False,
     )
     return RunResult(
@@ -163,9 +168,20 @@ def reset_public_schema(url: URL) -> None:
     """DROP SCHEMA public CASCADE; CREATE SCHEMA public; — у базі з вказаного URL і ніякій іншій."""
     import psycopg
 
-    with psycopg.connect(**_psycopg_dsn(url)) as conn:
-        conn.execute("DROP SCHEMA public CASCADE")
+    dsn = _psycopg_dsn(url)
+    dsn["autocommit"] = False  # обидві команди — в одній транзакції
+    with psycopg.connect(**dsn) as conn:
+        conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
         conn.execute("CREATE SCHEMA public")
+
+
+def database_has_data(url: URL) -> bool:
+    """Чи є в базі таблиця alembic_version (тобто база не порожня)."""
+    import psycopg
+
+    with psycopg.connect(**_psycopg_dsn(url)) as conn:
+        row = conn.execute("SELECT to_regclass('public.alembic_version') IS NOT NULL").fetchone()
+    return bool(row and row[0])
 
 
 class BackupService:
@@ -182,6 +198,8 @@ class BackupService:
         reset_schema: Callable[[URL], None] = reset_public_schema,
         upgrade_schema: Callable[[str], None] = embedded_db.upgrade_schema,
         known_revs: Callable[[], set[str]] = known_revisions,
+        marker_path: Path | None = None,
+        has_data: Callable[[URL], bool] | None = None,
     ) -> None:
         self._url = make_url(url) if isinstance(url, str) else url
         self._pg_bin = Path(pg_bin)
@@ -193,6 +211,9 @@ class BackupService:
         self._reset_schema = reset_schema
         self._upgrade_schema = upgrade_schema
         self._known_revs = known_revs
+        # маркер «відновлення триває»: у ньому шлях до копії «перед відновленням»
+        self.marker_path = Path(marker_path) if marker_path else embedded_db.requested_root() / RESTORE_MARKER_NAME
+        self._has_data = has_data or database_has_data
         self.fallback_used = False  # остання копія пішла в типову папку, бо обрана недоступна
 
     @classmethod
@@ -242,9 +263,16 @@ class BackupService:
             text = text.replace(password, "***")
         return text[-2000:]
 
-    def _tool(self, name: str, args: list[str], *, stdin=None, stdout=None) -> RunResult:
+    def _tool(
+        self, name: str, args: list[str], *, stdin=None, stdout=None, timeout: float = TOOL_TIMEOUT_SEC
+    ) -> RunResult:
         try:
-            result = self._run([self._exe(name), *args], env=self._env(), stdin=stdin, stdout=stdout)
+            result = self._run(
+                [self._exe(name), *args], env=self._env(), stdin=stdin, stdout=stdout, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            log.error("%s не вклався в %s с — перервано", name, timeout)
+            raise BackupError("Операція з резервною копією тривала занадто довго й була перервана.") from None
         except (OSError, subprocess.SubprocessError) as error:
             log.error("%s не запустився: %s", name, self._scrub(str(error)))
             raise BackupError(
@@ -264,6 +292,7 @@ class BackupService:
 
     def effective_dir(self, *, create: bool = False) -> Path:
         """Папка для копій: обрана, якщо доступна; інакше типова."""
+        self.fallback_used = False
         chosen = self.backup_dir
         if chosen is not None and chosen != self.default_dir:
             if (self._writable_dir(chosen) if create else chosen.is_dir()):
@@ -299,6 +328,7 @@ class BackupService:
                     "pg_dump",
                     [*self._conn_args(), "-Fc", "--no-owner", "--no-privileges", "-d", self._url.database],
                     stdout=handle,
+                    timeout=AUTO_TOOL_TIMEOUT_SEC if kind == "auto" else TOOL_TIMEOUT_SEC,
                 )
             if result.returncode != 0 or part.stat().st_size == 0:
                 log.error("pg_dump: код %s: %s", result.returncode, self._scrub(result.stderr))
@@ -377,7 +407,7 @@ class BackupService:
         if revision is None:
             raise BackupError("У файлі немає даних журналу (не знайдено версії бази).")
         if revision not in self._known_revs():
-            raise BackupTooNewError("Копію створено новішою версією програми. Оновіть програму.")
+            raise BackupTooNewError(UNKNOWN_REVISION_TEXT)
         return BackupInfo(path, created, kind, revision)
 
     # ------------------------------------------------------------ відновлення
@@ -402,10 +432,25 @@ class BackupService:
             raise BackupError("pg_restore завершився з помилкою")
         self._upgrade_schema(self._url.render_as_string(hide_password=False))
 
+    def _write_marker(self, safety: Path) -> None:
+        try:
+            self.marker_path.parent.mkdir(parents=True, exist_ok=True)
+            self.marker_path.write_text(str(safety), encoding="utf-8")
+        except OSError:
+            log.error("Не вдалося записати маркер відновлення", exc_info=True)
+            raise BackupError("Не вдалося почати відновлення. Деталі — у журналі.") from None
+
+    def _clear_marker(self) -> None:
+        try:
+            self.marker_path.unlink(missing_ok=True)
+        except OSError:
+            log.warning("Не вдалося видалити маркер відновлення", exc_info=True)
+
     def restore(self, path: Path) -> BackupInfo:
         """Відновлює базу з копії. Повертає BackupInfo; при невдачі кидає RestoreFailed."""
         info = self.inspect(path)
-        safety = self.create_backup("before-restore")  # не вдалося — відновлення не починається
+        safety = self.create_backup("before-restore", default_folder_only=True)  # завжди в типову папку; не вдалося — відновлення не починається
+        self._write_marker(safety)  # якщо процес обірветься — при наступному запуску запропонуємо повернення
         try:
             self._load(info.path)
         except Exception as error:  # noqa: BLE001
@@ -418,10 +463,60 @@ class BackupService:
                     "Відновлення не вдалося, і поточні дані теж не вдалося повернути автоматично. "
                     f"Не закривайте це повідомлення: копія ваших даних лежить тут: {safety}",
                     rolled_back=False,
-                ) from None
+                ) from None  # маркер лишається
+            self._clear_marker()
             raise RestoreFailed(
                 "Не вдалося відновити дані з копії. Нічого не змінено — працюйте як раніше.",
                 rolled_back=True,
             ) from None
+        self._clear_marker()
         log.info("Дані відновлено з копії %s", info.path.name)
         return info
+
+    # ------------------------------------------------------------ незавершене відновлення
+
+    def interrupted_restore_copy(self) -> Path | None:
+        """Копія «перед відновленням» від обірваного відновлення або None.
+
+        Якщо маркер є, а файл копії зник — пишемо в журнал і прибираємо маркер.
+        """
+        try:
+            if not self.marker_path.is_file():
+                return None
+            target = Path(self.marker_path.read_text(encoding="utf-8").strip())
+            parsed = parse_backup_name(target)
+            if parsed is None or parsed[1] != "before-restore":
+                log.error("Маркер відновлення вказує не на копію «перед відновленням»: %s", target.name)
+            elif target.is_file():
+                return target
+            elif not target.parent.is_dir():
+                # папка недоступна (напр. знято флешку) — маркер лишаємо, спробуємо наступного разу
+                log.warning("Папка копії перед відновленням недоступна: %s", target.name)
+                return None
+            else:
+                log.error("Маркер відновлення вказує на відсутній файл: %s", target.name)
+        except (OSError, ValueError):
+            log.error("Не вдалося прочитати маркер відновлення", exc_info=True)
+        self._clear_marker()
+        return None
+
+    def recover_interrupted_restore(self, copy: Path) -> None:
+        """Повертає дані з копії «перед відновленням». Нічого не видаляє, крім маркера після успіху."""
+        try:
+            has_data = self._has_data(self._url)
+        except Exception:  # noqa: BLE001
+            has_data = False
+        if has_data:  # база не порожня: перед стиранням — страхова копія (за можливості)
+            try:
+                self.create_backup("before-restore", default_folder_only=True)
+            except Exception:  # noqa: BLE001
+                log.warning("Не вдалося зробити копію перед поверненням даних", exc_info=True)
+        try:
+            self._load(Path(copy))
+        except Exception:  # noqa: BLE001
+            log.critical("Не вдалося повернути дані з %s", Path(copy).name, exc_info=True)
+            raise BackupError(
+                f"Не вдалося повернути дані автоматично. Копія ваших даних лежить тут: {copy}"
+            ) from None
+        self._clear_marker()
+        log.info("Дані повернуто з копії %s після обірваного відновлення", Path(copy).name)

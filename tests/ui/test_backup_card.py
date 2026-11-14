@@ -153,3 +153,62 @@ def test_confirm_dialog_requires_typed_word(qtbot):
     dialog.confirm_edit.setText("Відновити")
     assert dialog.delete_button.isEnabled()
     assert dialog.delete_button.text() == "Відновити"
+
+
+def test_fallback_note_follows_service_state(make_card):
+    env = make_card()
+    assert env.card.fallback_note.isHidden()
+    env.service.fallback_used = True
+    env.card.refresh()
+    assert env.card.fallback_note.isVisible()
+    assert env.card.fallback_note.text() == "Обрана папка недоступна — копії зберігаються в типовій"
+    env.service.fallback_used = False
+    env.card.refresh()
+    assert env.card.fallback_note.isHidden()
+
+
+class _Recoverable:
+    def __init__(self, copy, error=None):
+        self.copy = copy
+        self.error = error
+        self.recovered = []
+
+    def interrupted_restore_copy(self):
+        return self.copy
+
+    def recover_interrupted_restore(self, copy):
+        if self.error:
+            raise self.error
+        self.recovered.append(copy)
+
+
+def _patch_messages(monkeypatch):
+    messages = []
+    monkeypatch.setattr(backup_dialogs, "show_info", lambda p, t, x: messages.append(("info", x)))
+    monkeypatch.setattr(backup_dialogs, "show_warning", lambda p, t, x: messages.append(("warn", x)))
+    monkeypatch.setattr(backup_dialogs, "run_busy", lambda parent, text, action: action())
+    return messages
+
+
+def test_startup_recovery_accepted(monkeypatch):
+    messages = _patch_messages(monkeypatch)
+    service = _Recoverable(Path("x.dump"))
+    assert backup_dialogs.recover_interrupted_restore(lambda: service, ask=lambda p: True) is True
+    assert service.recovered == [Path("x.dump")]
+    assert "Відкрийте програму знову" in messages[0][1]
+
+
+def test_startup_recovery_declined_or_absent(monkeypatch):
+    _patch_messages(monkeypatch)
+    declined = _Recoverable(Path("x.dump"))
+    assert backup_dialogs.recover_interrupted_restore(lambda: declined, ask=lambda p: False) is False
+    assert declined.recovered == []
+    none = _Recoverable(None)
+    assert backup_dialogs.recover_interrupted_restore(lambda: none, ask=lambda p: pytest.fail("no ask")) is False
+
+
+def test_startup_recovery_failure_does_not_block_start(monkeypatch):
+    messages = _patch_messages(monkeypatch)
+    service = _Recoverable(Path("x.dump"), error=BackupError("Не вдалося повернути."))
+    assert backup_dialogs.recover_interrupted_restore(lambda: service, ask=lambda p: True) is False
+    assert messages[0][0] == "warn"

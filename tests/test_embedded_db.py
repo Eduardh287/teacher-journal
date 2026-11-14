@@ -3,6 +3,8 @@ import hashlib
 import sys
 from pathlib import Path
 
+import psycopg
+import psycopg.errors
 import pytest
 
 from journal import embedded_db as e
@@ -221,10 +223,24 @@ def test_no_alembic_table_means_no_backup(monkeypatch):
     _fake_service(monkeypatch, created)
 
     def boom(url):
-        raise RuntimeError("relation does not exist")
+        raise psycopg.errors.UndefinedTable("relation does not exist")
 
     monkeypatch.setattr(e, "current_revision", boom)
     e.backup_before_migration("postgresql+psycopg://u:p@h/db")
+    assert created == []
+
+
+@pytest.mark.parametrize("error", [RuntimeError("x"), psycopg.OperationalError("down")])
+def test_other_errors_block_migration(monkeypatch, error):
+    created = []
+    _fake_service(monkeypatch, created)
+
+    def boom(url):
+        raise error
+
+    monkeypatch.setattr(e, "current_revision", boom)
+    with pytest.raises(e.EmbeddedDbError, match="оновлення не виконано"):
+        e.backup_before_migration("postgresql+psycopg://u:p@h/db")
     assert created == []
 
 

@@ -1,5 +1,6 @@
 """Сервіс резервних копій на фейковому запускачі pg_dump/pg_restore (без PostgreSQL)."""
 import logging
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -26,10 +27,15 @@ class FakeRunner:
         self.list_ok = list_ok
         self.restore_results = list(restore_results or [])  # 0/1 для кожного повного pg_restore
         self.calls: list[tuple[list[str], dict]] = []
+        self.timeouts: list[tuple[str, float | None]] = []
+        self.raise_timeout = False
         self.dump_payload = b"PGDMP-fake"
 
-    def __call__(self, args, *, env, stdin=None, stdout=None):
+    def __call__(self, args, *, env, stdin=None, stdout=None, timeout=None):
         self.calls.append((args, env))
+        self.timeouts.append((Path(args[0]).stem, timeout))
+        if self.raise_timeout:
+            raise subprocess.TimeoutExpired(args, timeout)
         tool = Path(args[0]).stem
         if tool == "pg_dump":
             if not self.dump_ok:
@@ -56,6 +62,9 @@ class Clock:
         return self.value
 
 
+kw_has_data = [False]
+
+
 def make(tmp_path, runner=None, backup_dir=None, **kw):
     runner = runner or FakeRunner()
     events = []
@@ -70,6 +79,8 @@ def make(tmp_path, runner=None, backup_dir=None, **kw):
         reset_schema=lambda url: events.append(("reset", url.database)),
         upgrade_schema=lambda url: events.append("upgrade"),
         known_revs=lambda: {"rev_a", "rev_b"},
+        marker_path=tmp_path / "restore-in-progress",
+        has_data=lambda url: kw_has_data[0],
         **kw,
     )
     service.events = events
@@ -190,7 +201,7 @@ def test_inspect_reads_revision(tmp_path):
 def test_newer_revision_refused(tmp_path):
     service, runner = make(tmp_path, FakeRunner(revision="from_the_future"))
     path = service.create_backup("manual")
-    with pytest.raises(BackupTooNewError, match="новішою версією"):
+    with pytest.raises(BackupTooNewError, match="іншою або новішою версією"):
         service.inspect(path)
     with pytest.raises(BackupTooNewError):
         service.restore(path)
@@ -277,3 +288,151 @@ def test_password_only_in_env_never_in_argv_or_logs(tmp_path, caplog):
 def test_default_dir_follows_data_root(monkeypatch, tmp_path):
     monkeypatch.setenv("JOURNAL_DATA_DIR", str(tmp_path / "дані"))
     assert bs.default_backup_dir() == tmp_path / "дані" / "backups"
+
+
+# ---------------------------------------------------------------- маркер незавершеного відновлення
+
+def test_marker_written_before_reset_and_removed_on_success(tmp_path):
+    service, _ = make(tmp_path)
+    path = service.create_backup("manual")
+    seen = []
+    service._reset_schema = lambda url: seen.append(service.marker_path.read_text(encoding="utf-8"))
+    service.restore(path)
+    assert len(seen) == 1 and seen[0].endswith("_before-restore.dump")
+    assert not service.marker_path.exists()
+
+
+def test_marker_removed_after_successful_rollback(tmp_path):
+    service, _ = make(tmp_path, FakeRunner(restore_results=[1, 0]))
+    path = service.create_backup("manual")
+    with pytest.raises(RestoreFailed):
+        service.restore(path)
+    assert not service.marker_path.exists()
+
+
+def test_marker_kept_when_rollback_fails(tmp_path):
+    service, _ = make(tmp_path, FakeRunner(restore_results=[1, 1]))
+    path = service.create_backup("manual")
+    with pytest.raises(RestoreFailed):
+        service.restore(path)
+    assert service.interrupted_restore_copy() is not None
+
+
+def test_no_marker_when_safety_copy_fails(tmp_path):
+    runner = FakeRunner()
+    service, _ = make(tmp_path, runner)
+    path = service.create_backup("manual")
+    runner.dump_ok = False
+    with pytest.raises(BackupError):
+        service.restore(path)
+    assert not service.marker_path.exists()
+
+
+def test_interrupted_restore_recovery(tmp_path):
+    service, _ = make(tmp_path)
+    safety = service.create_backup("before-restore")
+    service.marker_path.write_text(str(safety), encoding="utf-8")
+    assert service.interrupted_restore_copy() == safety
+    service.recover_interrupted_restore(safety)
+    assert service.events == ["dispose", ("reset", "journal"), "upgrade"]
+    assert not service.marker_path.exists()
+    assert safety.exists()  # нічого не видалено
+
+
+def test_interrupted_restore_missing_file_clears_marker(tmp_path):
+    service, _ = make(tmp_path)
+    (tmp_path / "default").mkdir()
+    gone = tmp_path / "default" / "journal_2026-01-01_00-00-00_before-restore.dump"
+    service.marker_path.write_text(str(gone), encoding="utf-8")
+    assert service.interrupted_restore_copy() is None
+    assert not service.marker_path.exists()
+
+
+def test_marker_with_foreign_target_is_rejected(tmp_path):
+    service, _ = make(tmp_path)
+    evil = tmp_path / "evil.dump"
+    evil.write_bytes(b"x")
+    service.marker_path.write_text(str(evil), encoding="utf-8")
+    assert service.interrupted_restore_copy() is None
+    assert not service.marker_path.exists() and evil.exists()
+
+
+def test_marker_kept_when_copy_folder_unavailable(tmp_path):
+    service, _ = make(tmp_path)
+    gone = tmp_path / "usb" / "journal_2026-01-01_00-00-00_before-restore.dump"
+    service.marker_path.write_text(str(gone), encoding="utf-8")
+    assert service.interrupted_restore_copy() is None
+    assert service.marker_path.exists()
+
+
+def test_before_restore_always_in_default_folder(tmp_path):
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    service, _ = make(tmp_path, backup_dir=usb)
+    path = service.create_backup("manual")
+    assert path.parent == usb
+    service.restore(path)
+    assert list((tmp_path / "default").glob("*_before-restore.dump"))
+    assert not list(usb.glob("*_before-restore.dump"))
+
+
+def test_recovery_makes_safety_copy_only_when_db_has_data(tmp_path):
+    service, _ = make(tmp_path)
+    safety = service.create_backup("before-restore")
+    before = len(list((tmp_path / "default").glob("*_before-restore.dump")))
+    kw_has_data[0] = True
+    try:
+        service._now = lambda: datetime(2026, 11, 14, 11, 0, 0)
+        service.recover_interrupted_restore(safety)
+    finally:
+        kw_has_data[0] = False
+    assert len(list((tmp_path / "default").glob("*_before-restore.dump"))) == before + 1
+    service._now = lambda: datetime(2026, 11, 14, 12, 0, 0)
+    service.recover_interrupted_restore(safety)
+    assert len(list((tmp_path / "default").glob("*_before-restore.dump"))) == before + 1
+
+
+def test_no_marker_means_nothing_to_recover(tmp_path):
+    service, _ = make(tmp_path)
+    assert service.interrupted_restore_copy() is None
+
+
+def test_failed_recovery_keeps_marker(tmp_path):
+    service, runner = make(tmp_path)
+    safety = service.create_backup("before-restore")
+    service.marker_path.write_text(str(safety), encoding="utf-8")
+    runner.restore_results = [1]
+    with pytest.raises(BackupError):
+        service.recover_interrupted_restore(safety)
+    assert service.marker_path.exists() and safety.exists()
+
+
+# ---------------------------------------------------------------- тайм-аут, fallback
+
+def test_auto_backup_uses_short_timeout_others_long(tmp_path):
+    service, runner = make(tmp_path)
+    service.create_backup("auto")
+    service.create_backup("manual")
+    dumps = [t for name, t in runner.timeouts if name == "pg_dump"]
+    assert dumps == [bs.AUTO_TOOL_TIMEOUT_SEC, bs.TOOL_TIMEOUT_SEC] == [60, 600]
+
+
+def test_backup_timeout_is_backup_error_without_leftovers(tmp_path):
+    runner = FakeRunner()
+    service, _ = make(tmp_path, runner)
+    runner.raise_timeout = True
+    with pytest.raises(BackupError, match="тривала занадто довго"):
+        service.create_backup("auto")
+    assert not list((tmp_path / "default").glob("*"))
+
+
+def test_fallback_used_resets_on_effective_dir(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    service, _ = make(tmp_path, backup_dir=blocker / "sub")
+    service.effective_dir(create=True)
+    assert service.fallback_used
+    service.backup_dir = tmp_path / "ok"
+    (tmp_path / "ok").mkdir()
+    service.effective_dir()
+    assert not service.fallback_used

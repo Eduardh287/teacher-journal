@@ -5,7 +5,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from journal.services.semesters import (
 )
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
 from journal.ui import backup_dialogs
+from journal.ui.theme import app_settings
 from journal.ui.widgets import ElidedLabel, button, label
 
 MAX_CONFLICTS_SHOWN = 10
@@ -271,16 +272,17 @@ class SubjectsCard(QFrame):
 
 BACKUP_DIR_KEY = "backup_dir"
 NO_BACKUPS_TEXT = "Копій ще немає"
+FALLBACK_NOTE = "Обрана папка недоступна — копії зберігаються в типовій"
 
 
 def load_backup_dir() -> str | None:
     """Обрана викладачкою папка копій (QSettings) або None — тоді типова."""
-    value = QSettings("TeacherJournal", "TeacherJournal").value(BACKUP_DIR_KEY, "")
+    value = app_settings().value(BACKUP_DIR_KEY, "")
     return str(value) if value else None
 
 
 def save_backup_dir(path: str | None) -> None:
-    settings = QSettings("TeacherJournal", "TeacherJournal")
+    settings = app_settings()
     if path:
         settings.setValue(BACKUP_DIR_KEY, path)
     else:
@@ -330,6 +332,9 @@ class BackupsCard(QFrame):
         layout.addWidget(self.folder_label)
         self.latest_label = label("", muted=True, wrap=True)
         layout.addWidget(self.latest_label)
+        self.fallback_note = label(FALLBACK_NOTE, muted=True, wrap=True)
+        self.fallback_note.hide()
+        layout.addWidget(self.fallback_note)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -377,9 +382,11 @@ class BackupsCard(QFrame):
             logging.exception("Не вдалося прочитати список резервних копій")
             self.folder_label.setText("")
             self.latest_label.setText("Не вдалося прочитати список копій")
+            self.fallback_note.hide()
             return
         self.folder_label.setText(f"Папка: {folder}")
         self.folder_label.setToolTip(str(folder))
+        self.fallback_note.setVisible(bool(getattr(service, "fallback_used", False)))
         if backups:
             newest = backups[0]
             self.latest_label.setText(
