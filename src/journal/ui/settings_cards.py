@@ -5,7 +5,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from journal.services.semesters import (
 )
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
 from journal.ui import backup_dialogs
+from journal.ui.theme import app_settings
 from journal.ui.widgets import ElidedLabel, button, label
 
 MAX_CONFLICTS_SHOWN = 10
@@ -276,12 +277,12 @@ FALLBACK_NOTE = "Обрана папка недоступна — копії з�
 
 def load_backup_dir() -> str | None:
     """Обрана викладачкою папка копій (QSettings) або None — тоді типова."""
-    value = QSettings("TeacherJournal", "TeacherJournal").value(BACKUP_DIR_KEY, "")
+    value = app_settings().value(BACKUP_DIR_KEY, "")
     return str(value) if value else None
 
 
 def save_backup_dir(path: str | None) -> None:
-    settings = QSettings("TeacherJournal", "TeacherJournal")
+    settings = app_settings()
     if path:
         settings.setValue(BACKUP_DIR_KEY, path)
     else:

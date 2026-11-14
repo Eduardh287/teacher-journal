@@ -97,6 +97,10 @@ def ask_recover_interrupted(parent: QWidget | None = None) -> bool:
     box.setIcon(QMessageBox.Icon.Question)
     box.setWindowTitle("Відновлення не завершилося")
     box.setText("Минулого разу відновлення даних не завершилося. Повернути дані, які були до нього?")
+    box.setInformativeText(
+        "Якщо обрати «Пізніше», журнал виглядатиме порожнім, але нічого не втрачено. "
+        "Це запитання з'явиться знову при наступному запуску."
+    )
     yes = box.addButton("Повернути", QMessageBox.ButtonRole.AcceptRole)
     box.addButton("Пізніше", QMessageBox.ButtonRole.RejectRole)
     box.exec()

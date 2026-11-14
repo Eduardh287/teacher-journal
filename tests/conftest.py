@@ -88,3 +88,4 @@ def teacher_class(session) -> TeacherClass:
     session.add_all([teacher, school_class, *students, journal])
     session.flush()
     return TeacherClass(teacher, school_class, students, journal)
+

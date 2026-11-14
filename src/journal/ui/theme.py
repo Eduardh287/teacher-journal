@@ -216,8 +216,14 @@ QCheckBox::indicator:checked { image: url("$check"); }
 _current_theme = DEFAULT_THEME
 
 
+def app_settings() -> QSettings:
+    """Єдине місце створення QSettings застосунку (формат за замовчуванням: у проді — реєстр,
+    у тестах фікстура підміняє на INI у тимчасовій папці)."""
+    return QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "TeacherJournal", "TeacherJournal")
+
+
 def _settings() -> QSettings:
-    return QSettings("TeacherJournal", "TeacherJournal")
+    return app_settings()
 
 
 def load_theme_name() -> str:

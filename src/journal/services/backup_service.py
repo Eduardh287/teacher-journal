@@ -168,9 +168,20 @@ def reset_public_schema(url: URL) -> None:
     """DROP SCHEMA public CASCADE; CREATE SCHEMA public; — у базі з вказаного URL і ніякій іншій."""
     import psycopg
 
-    with psycopg.connect(**_psycopg_dsn(url)) as conn:
-        conn.execute("DROP SCHEMA public CASCADE")
+    dsn = _psycopg_dsn(url)
+    dsn["autocommit"] = False  # обидві команди — в одній транзакції
+    with psycopg.connect(**dsn) as conn:
+        conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
         conn.execute("CREATE SCHEMA public")
+
+
+def database_has_data(url: URL) -> bool:
+    """Чи є в базі таблиця alembic_version (тобто база не порожня)."""
+    import psycopg
+
+    with psycopg.connect(**_psycopg_dsn(url)) as conn:
+        row = conn.execute("SELECT to_regclass('public.alembic_version') IS NOT NULL").fetchone()
+    return bool(row and row[0])
 
 
 class BackupService:
@@ -188,6 +199,7 @@ class BackupService:
         upgrade_schema: Callable[[str], None] = embedded_db.upgrade_schema,
         known_revs: Callable[[], set[str]] = known_revisions,
         marker_path: Path | None = None,
+        has_data: Callable[[URL], bool] | None = None,
     ) -> None:
         self._url = make_url(url) if isinstance(url, str) else url
         self._pg_bin = Path(pg_bin)
@@ -201,6 +213,7 @@ class BackupService:
         self._known_revs = known_revs
         # маркер «відновлення триває»: у ньому шлях до копії «перед відновленням»
         self.marker_path = Path(marker_path) if marker_path else embedded_db.requested_root() / RESTORE_MARKER_NAME
+        self._has_data = has_data or database_has_data
         self.fallback_used = False  # остання копія пішла в типову папку, бо обрана недоступна
 
     @classmethod
@@ -259,7 +272,7 @@ class BackupService:
             )
         except subprocess.TimeoutExpired:
             log.error("%s не вклався в %s с — перервано", name, timeout)
-            raise BackupError("Резервна копія створювалась занадто довго й була перервана.") from None
+            raise BackupError("Операція з резервною копією тривала занадто довго й була перервана.") from None
         except (OSError, subprocess.SubprocessError) as error:
             log.error("%s не запустився: %s", name, self._scrub(str(error)))
             raise BackupError(
@@ -436,7 +449,7 @@ class BackupService:
     def restore(self, path: Path) -> BackupInfo:
         """Відновлює базу з копії. Повертає BackupInfo; при невдачі кидає RestoreFailed."""
         info = self.inspect(path)
-        safety = self.create_backup("before-restore")  # не вдалося — відновлення не починається
+        safety = self.create_backup("before-restore", default_folder_only=True)  # завжди в типову папку; не вдалося — відновлення не починається
         self._write_marker(safety)  # якщо процес обірветься — при наступному запуску запропонуємо повернення
         try:
             self._load(info.path)
@@ -471,9 +484,17 @@ class BackupService:
             if not self.marker_path.is_file():
                 return None
             target = Path(self.marker_path.read_text(encoding="utf-8").strip())
-            if target.is_file():
+            parsed = parse_backup_name(target)
+            if parsed is None or parsed[1] != "before-restore":
+                log.error("Маркер відновлення вказує не на копію «перед відновленням»: %s", target.name)
+            elif target.is_file():
                 return target
-            log.error("Маркер відновлення вказує на відсутній файл: %s", target.name)
+            elif not target.parent.is_dir():
+                # папка недоступна (напр. знято флешку) — маркер лишаємо, спробуємо наступного разу
+                log.warning("Папка копії перед відновленням недоступна: %s", target.name)
+                return None
+            else:
+                log.error("Маркер відновлення вказує на відсутній файл: %s", target.name)
         except (OSError, ValueError):
             log.error("Не вдалося прочитати маркер відновлення", exc_info=True)
         self._clear_marker()
@@ -481,6 +502,15 @@ class BackupService:
 
     def recover_interrupted_restore(self, copy: Path) -> None:
         """Повертає дані з копії «перед відновленням». Нічого не видаляє, крім маркера після успіху."""
+        try:
+            has_data = self._has_data(self._url)
+        except Exception:  # noqa: BLE001
+            has_data = False
+        if has_data:  # база не порожня: перед стиранням — страхова копія (за можливості)
+            try:
+                self.create_backup("before-restore", default_folder_only=True)
+            except Exception:  # noqa: BLE001
+                log.warning("Не вдалося зробити копію перед поверненням даних", exc_info=True)
         try:
             self._load(Path(copy))
         except Exception:  # noqa: BLE001

@@ -62,6 +62,9 @@ class Clock:
         return self.value
 
 
+kw_has_data = [False]
+
+
 def make(tmp_path, runner=None, backup_dir=None, **kw):
     runner = runner or FakeRunner()
     events = []
@@ -77,6 +80,7 @@ def make(tmp_path, runner=None, backup_dir=None, **kw):
         upgrade_schema=lambda url: events.append("upgrade"),
         known_revs=lambda: {"rev_a", "rev_b"},
         marker_path=tmp_path / "restore-in-progress",
+        has_data=lambda url: kw_has_data[0],
         **kw,
     )
     service.events = events
@@ -337,9 +341,55 @@ def test_interrupted_restore_recovery(tmp_path):
 
 def test_interrupted_restore_missing_file_clears_marker(tmp_path):
     service, _ = make(tmp_path)
-    service.marker_path.write_text(str(tmp_path / "gone.dump"), encoding="utf-8")
+    (tmp_path / "default").mkdir()
+    gone = tmp_path / "default" / "journal_2026-01-01_00-00-00_before-restore.dump"
+    service.marker_path.write_text(str(gone), encoding="utf-8")
     assert service.interrupted_restore_copy() is None
     assert not service.marker_path.exists()
+
+
+def test_marker_with_foreign_target_is_rejected(tmp_path):
+    service, _ = make(tmp_path)
+    evil = tmp_path / "evil.dump"
+    evil.write_bytes(b"x")
+    service.marker_path.write_text(str(evil), encoding="utf-8")
+    assert service.interrupted_restore_copy() is None
+    assert not service.marker_path.exists() and evil.exists()
+
+
+def test_marker_kept_when_copy_folder_unavailable(tmp_path):
+    service, _ = make(tmp_path)
+    gone = tmp_path / "usb" / "journal_2026-01-01_00-00-00_before-restore.dump"
+    service.marker_path.write_text(str(gone), encoding="utf-8")
+    assert service.interrupted_restore_copy() is None
+    assert service.marker_path.exists()
+
+
+def test_before_restore_always_in_default_folder(tmp_path):
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    service, _ = make(tmp_path, backup_dir=usb)
+    path = service.create_backup("manual")
+    assert path.parent == usb
+    service.restore(path)
+    assert list((tmp_path / "default").glob("*_before-restore.dump"))
+    assert not list(usb.glob("*_before-restore.dump"))
+
+
+def test_recovery_makes_safety_copy_only_when_db_has_data(tmp_path):
+    service, _ = make(tmp_path)
+    safety = service.create_backup("before-restore")
+    before = len(list((tmp_path / "default").glob("*_before-restore.dump")))
+    kw_has_data[0] = True
+    try:
+        service._now = lambda: datetime(2026, 11, 14, 11, 0, 0)
+        service.recover_interrupted_restore(safety)
+    finally:
+        kw_has_data[0] = False
+    assert len(list((tmp_path / "default").glob("*_before-restore.dump"))) == before + 1
+    service._now = lambda: datetime(2026, 11, 14, 12, 0, 0)
+    service.recover_interrupted_restore(safety)
+    assert len(list((tmp_path / "default").glob("*_before-restore.dump"))) == before + 1
 
 
 def test_no_marker_means_nothing_to_recover(tmp_path):
@@ -371,7 +421,7 @@ def test_backup_timeout_is_backup_error_without_leftovers(tmp_path):
     runner = FakeRunner()
     service, _ = make(tmp_path, runner)
     runner.raise_timeout = True
-    with pytest.raises(BackupError, match="занадто довго"):
+    with pytest.raises(BackupError, match="тривала занадто довго"):
         service.create_backup("auto")
     assert not list((tmp_path / "default").glob("*"))
 
