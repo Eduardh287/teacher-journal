@@ -1,9 +1,22 @@
 """Картки сторінки «Налаштування»: межі семестрів і довідник предметів (етап 5.2)."""
 import logging
+import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
+from pathlib import Path
 
-from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
+from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
+)
 
 from journal.services.journal_types import JournalError, SemesterConflict
 from journal.services.semesters import (
@@ -13,7 +26,8 @@ from journal.services.semesters import (
     SemesterError,
 )
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
-from journal.ui.widgets import button, label
+from journal.ui import backup_dialogs
+from journal.ui.widgets import ElidedLabel, button, label
 
 MAX_CONFLICTS_SHOWN = 10
 GENERIC_ERROR = "Не вдалося зберегти зміни"
@@ -251,3 +265,211 @@ class SubjectsCard(QFrame):
         self.load()
         if self._on_changed is not None:
             self._on_changed()
+
+
+# ---------------------------------------------------------------- резервні копії (етап 7a)
+
+BACKUP_DIR_KEY = "backup_dir"
+NO_BACKUPS_TEXT = "Копій ще немає"
+
+
+def load_backup_dir() -> str | None:
+    """Обрана викладачкою папка копій (QSettings) або None — тоді типова."""
+    value = QSettings("TeacherJournal", "TeacherJournal").value(BACKUP_DIR_KEY, "")
+    return str(value) if value else None
+
+
+def save_backup_dir(path: str | None) -> None:
+    settings = QSettings("TeacherJournal", "TeacherJournal")
+    if path:
+        settings.setValue(BACKUP_DIR_KEY, path)
+    else:
+        settings.remove(BACKUP_DIR_KEY)
+
+
+def _default_backup_service(backup_dir: str | None):
+    from journal.services.backup_service import BackupService
+
+    return BackupService.for_app(backup_dir)
+
+
+def open_folder(path: Path) -> None:
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
+class BackupsCard(QFrame):
+    """Резервні копії: створити зараз, відкрити/змінити папку, відновити з копії."""
+
+    def __init__(
+        self,
+        service_factory: Callable[[str | None], object] | None = None,
+        get_dir: Callable[[], str | None] = load_backup_dir,
+        set_dir: Callable[[str | None], None] = save_backup_dir,
+        on_restored: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__()
+        self._factory = service_factory or _default_backup_service
+        self._get_dir = get_dir
+        self._set_dir = set_dir
+        self._on_restored = on_restored or QApplication.quit
+
+        self.setObjectName("Card")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+        layout.addWidget(label("Резервні копії", object_name="CardTitle"))
+        layout.addWidget(
+            label(
+                "Копія робиться автоматично при закритті програми. Можна зберігати її на флешці "
+                "або в папці, що синхронізується з хмарою.",
+                muted=True,
+                wrap=True,
+            )
+        )
+        self.folder_label = ElidedLabel()
+        layout.addWidget(self.folder_label)
+        self.latest_label = label("", muted=True, wrap=True)
+        layout.addWidget(self.latest_label)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.create_button = button("Створити копію зараз", variant="primary")
+        self.create_button.clicked.connect(self._on_create)
+        self.open_button = button("Відкрити папку")
+        self.open_button.clicked.connect(self._on_open)
+        self.change_button = button("Змінити папку…")
+        self.change_button.clicked.connect(self._on_change_folder)
+        self.restore_button = button("Відновити з копії…")
+        self.restore_button.clicked.connect(self._on_restore)
+        for widget in (self.create_button, self.open_button, self.change_button, self.restore_button):
+            row.addWidget(widget)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.status = label("", muted=True, wrap=True)
+        self.status.hide()
+        layout.addWidget(self.status)
+        self.error = _error_label()
+        layout.addWidget(self.error)
+        self.refresh()
+
+    # ---------- допоміжне ----------
+
+    def _service(self):
+        return self._factory(self._get_dir())
+
+    def _show_status(self, text: str) -> None:
+        self.error.hide()
+        self.status.setText(text)
+        self.status.show()
+
+    def _show_error(self, text: str) -> None:
+        self.status.hide()
+        self.error.setText(text)
+        self.error.show()
+
+    def refresh(self) -> None:
+        try:
+            service = self._service()
+            backups = service.list_backups()
+            folder = service.effective_dir()
+        except Exception:
+            logging.exception("Не вдалося прочитати список резервних копій")
+            self.folder_label.setText("")
+            self.latest_label.setText("Не вдалося прочитати список копій")
+            return
+        self.folder_label.setText(f"Папка: {folder}")
+        self.folder_label.setToolTip(str(folder))
+        if backups:
+            newest = backups[0]
+            self.latest_label.setText(
+                f"Остання копія: {newest.created:%d.%m.%Y %H:%M} ({newest.kind_title})"
+            )
+        else:
+            self.latest_label.setText(NO_BACKUPS_TEXT)
+
+    # ---------- дії ----------
+
+    def _on_create(self) -> None:
+        from journal.services.backup_service import BackupError
+
+        try:
+            service = self._service()
+            path = backup_dialogs.run_busy(
+                self, "Створюю резервну копію…", lambda: service.create_backup("manual")
+            )
+        except BackupError as error:
+            self._show_error(str(error))
+            return
+        except Exception:
+            logging.exception("Не вдалося створити резервну копію")
+            self._show_error("Не вдалося створити резервну копію. Деталі — у журналі.")
+            return
+        text = f"Копію створено: {path.name}"
+        if getattr(service, "fallback_used", False):
+            text += f"\n{backup_dialogs.FALLBACK_TEXT}"
+        self._show_status(text)
+        self.refresh()
+
+    def _on_open(self) -> None:
+        try:
+            folder = Path(self._service().effective_dir(create=True))
+        except Exception:
+            logging.exception("Не вдалося відкрити папку копій")
+            self._show_error("Не вдалося відкрити папку копій.")
+            return
+        open_folder(folder)
+
+    def _on_change_folder(self) -> None:
+        start = self._get_dir() or str(self._service().effective_dir())
+        chosen = QFileDialog.getExistingDirectory(self, "Папка для резервних копій", start)
+        if not chosen:
+            return
+        self._set_dir(os.path.normpath(chosen))
+        self._show_status("Папку змінено. Нові копії зберігатимуться тут.")
+        self.refresh()
+
+    def _on_restore(self) -> None:
+        from journal.services.backup_service import BackupError, RestoreFailed
+
+        try:
+            service = self._service()
+            start = str(service.effective_dir())
+        except Exception:
+            logging.exception("Не вдалося підготувати відновлення")
+            self._show_error("Не вдалося підготувати відновлення. Деталі — у журналі.")
+            return
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Відновити з копії", start, "Резервні копії (*.dump)"
+        )
+        if not chosen:
+            return
+        try:
+            info = service.inspect(Path(chosen))
+        except BackupError as error:
+            self._show_error(str(error))
+            return
+        except Exception:
+            logging.exception("Не вдалося перевірити файл копії")
+            self._show_error("Не вдалося прочитати файл копії. Деталі — у журналі.")
+            return
+        if not backup_dialogs.confirm_restore(self, info):
+            return
+        try:
+            backup_dialogs.run_busy(self, "Відновлюю дані…", lambda: service.restore(info.path))
+        except RestoreFailed as error:
+            self._show_error(str(error))
+            backup_dialogs.show_warning(self, "Відновлення не вдалося", str(error))
+            self.refresh()
+            return
+        except BackupError as error:
+            self._show_error(str(error))
+            return
+        except Exception:
+            logging.exception("Відновлення завершилось несподіваною помилкою")
+            self._show_error("Не вдалося відновити дані. Деталі — у журналі.")
+            return
+        backup_dialogs.show_info(
+            self, "Дані відновлено", "Дані відновлено. Програма закриється — відкрийте її знову."
+        )
+        self._on_restored()
