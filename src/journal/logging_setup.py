@@ -41,8 +41,11 @@ def log_dir() -> Path:
     Основний шлях: %LOCALAPPDATA%\\teacher-journal\\logs.
     Якщо LOCALAPPDATA не задано — ~/.teacher-journal/logs.
     """
+    data_override = os.environ.get("JOURNAL_DATA_DIR")  # пілотні запуски не чіпають реальний профіль
     local_appdata = os.environ.get("LOCALAPPDATA")
-    if local_appdata:
+    if data_override:
+        path = Path(data_override) / "logs"
+    elif local_appdata:
         path = Path(local_appdata) / "teacher-journal" / "logs"
     else:
         path = Path.home() / ".teacher-journal" / "logs"
