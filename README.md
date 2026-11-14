@@ -2,7 +2,7 @@
 
 *English: a private desktop gradebook for a secondary-school math and physics teacher, built as a diploma project.
 Python + PySide6 UI, PostgreSQL via SQLAlchemy 2 and Alembic, layered architecture (ui, services, repositories),
-keyboard-driven grade entry, and a per-user Windows installer with an embedded PostgreSQL (no admin rights needed).
+keyboard-driven grade entry, and a pilot per-user Windows installer with an embedded PostgreSQL (no admin rights needed).
 The UI is in Ukrainian. Development was assisted by AI coding tools under the author's supervision.*
 
 Приватний десктопний електронний журнал для викладачки математики і фізики: класи, учні,
@@ -15,7 +15,7 @@ The UI is in Ukrainian. Development was assisted by AI coding tools under the au
 - Класи й учні (за українським алфавітом), архів класів, автоматичний перехід на новий навчальний рік.
 - Журнали «клас + предмет» з таблицею оцінок і введенням з клавіатури: цифри — оцінка (1–12),
   `н` — відсутній, `х` — хворів, `з` — запізнився, `Del` — очистити, `Enter`/`Tab` — навігація, `F2` — коментар.
-- Семестри за місяцями (вер–гру → I, січ–чер → II), наскрізна нумерація уроків за рік.
+- Семестри за місяцями (за замовчуванням вер–гру → I, січ–чер → II; налаштовується), наскрізна нумерація уроків за рік.
 - Тематичні, семестрові та річні оцінки: правило «н/а», округлення 7,5 → 8, ручна зміна.
 - «Зошит» і домашнє завдання до уроків.
 - Світла й темна теми.
@@ -29,9 +29,9 @@ The UI is in Ukrainian. Development was assisted by AI coding tools under the au
 |---|---|
 | ![Журнал: тематичні, «Зошит», семестрова](docs/screenshots/stage6_sem1_light.png) | ![Журнал, II семестр, темна тема](docs/screenshots/stage6_sem2_dark.png) |
 
-| Вхід | Налаштування, темна тема |
+| Вхід | Панель «Проведені уроки» з д/з |
 |---|---|
-| ![Вхід](docs/screenshots/login_light.png) | ![Налаштування](docs/screenshots/settings_dark.png) |
+| ![Вхід](docs/screenshots/login_light.png) | ![Проведені уроки](docs/screenshots/stage6_panel_homework.png) |
 
 ## Технології
 
@@ -102,6 +102,8 @@ tests/
 в інсталятор Inno Setup (встановлення для поточного користувача, без прав адміністратора).
 PostgreSQL вбудований: запускається самим застосунком у `%LOCALAPPDATA%`, слухає лише `127.0.0.1`
 з випадковим паролем. Конфігурація — у папці `packaging/`.
+Потрібні: PyInstaller, PostgreSQL 17 (`C:\Program Files\PostgreSQL\17` або ключ `-PgSource`) та Inno Setup 6
+(без нього крок інсталятора пропускається).
 
 ## Статус
 
