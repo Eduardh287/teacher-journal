@@ -19,9 +19,14 @@ _SETUP_HINT = "Запустіть scripts/setup_dev_db.ps1 або скопіюй
 def database_url() -> str:
     """Підключення до робочої бази застосунку."""
     url = os.getenv("DATABASE_URL")
-    if not url:
-        raise ConfigError(f"DATABASE_URL не задано. {_SETUP_HINT}")
-    return url
+    if url:
+        return url
+    # Встановлена версія: власний PostgreSQL (у dev-режимі та тестах це не вмикається).
+    from journal import embedded_db
+
+    if embedded_db.is_bundled_mode():
+        return embedded_db.ensure_running()
+    raise ConfigError(f"DATABASE_URL не задано. {_SETUP_HINT}")
 
 
 def get_test_database_url() -> str:
