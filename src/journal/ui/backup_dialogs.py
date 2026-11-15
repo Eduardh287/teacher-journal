@@ -1,10 +1,10 @@
 """Діалоги резервних копій: «зачекайте», підтвердження відновлення, копія при виході (етап 7a)."""
-import logging
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QVBoxLayout, QWidget
 
+from journal.logging_setup import log_failure
 from journal.services.backup_service import BackupInfo
 from journal.ui.journal_dialogs import _TypedConfirmDialog
 from journal.ui.widgets import label
@@ -81,10 +81,10 @@ def default_exit_backup(parent: QWidget | None) -> None:
         if service.fallback_used:
             show_info(parent, "Резервна копія", FALLBACK_TEXT)
     except BackupError as error:
-        logging.warning("Автоматична копія при виході не створена: %s", error)
+        log_failure("Автоматична копія при виході не створена")
         show_warning(parent, "Резервна копія", f"{error}\nПрограма все одно закриється.")
     except Exception:
-        logging.exception("Автоматична копія при виході не створена")
+        log_failure("Автоматична копія при виході не створена")
         show_warning(
             parent,
             "Резервна копія",
@@ -98,13 +98,36 @@ def ask_recover_interrupted(parent: QWidget | None = None) -> bool:
     box.setWindowTitle("Відновлення не завершилося")
     box.setText("Минулого разу відновлення даних не завершилося. Повернути дані, які були до нього?")
     box.setInformativeText(
-        "Якщо обрати «Пізніше», журнал виглядатиме порожнім, але нічого не втрачено. "
+        "Якщо обрати «Пізніше», дані в журналі можуть бути неповними, але копію збережено. "
         "Це запитання з'явиться знову при наступному запуску."
     )
     yes = box.addButton("Повернути", QMessageBox.ButtonRole.AcceptRole)
     box.addButton("Пізніше", QMessageBox.ButtonRole.RejectRole)
     box.exec()
     return box.clickedButton() is yes
+
+
+UNAVAILABLE_COPY_TEXT = (
+    "Минулого разу відновлення даних не завершилося, а папка з копією зараз недоступна "
+    "(наприклад, не підключено флешку чи диск). Підключіть її й перезапустіть програму — "
+    "тоді можна буде повернути дані."
+)
+_NOTIFIED_KEY = "backup/unavailable_copy_notified"
+
+
+def _notice_unavailable_copy(service: object, copy) -> None:
+    """Один раз повідомляє, що папка копії недоступна; після появи копії прапорець скидається."""
+    from journal.ui.theme import app_settings
+
+    settings = app_settings()
+    unavailable = copy is None and bool(getattr(service, "restore_copy_unavailable", False))
+    if not unavailable:
+        settings.remove(_NOTIFIED_KEY)
+        return
+    if settings.value(_NOTIFIED_KEY, False, type=bool):
+        return
+    settings.setValue(_NOTIFIED_KEY, True)
+    show_warning(None, "Відновлення", UNAVAILABLE_COPY_TEXT)
 
 
 def recover_interrupted_restore(
@@ -121,15 +144,16 @@ def recover_interrupted_restore(
     try:
         service = (service_factory or BackupService.for_app)()
         copy = service.interrupted_restore_copy()
+        _notice_unavailable_copy(service, copy)
         if copy is None or not ask(None):
             return False
         run_busy(None, "Повертаю дані…", lambda: service.recover_interrupted_restore(copy))
     except BackupError as error:
-        logging.error("Не вдалося повернути дані після обірваного відновлення: %s", error)
+        log_failure("Не вдалося повернути дані після обірваного відновлення")
         show_warning(None, "Відновлення", str(error))
         return False
     except Exception:
-        logging.exception("Перевірка незавершеного відновлення не вдалася")
+        log_failure("Перевірка незавершеного відновлення не вдалася")
         return False
     show_info(None, "Відновлення", "Дані повернуто. Відкрийте програму знову.")
     return True

@@ -27,7 +27,7 @@ DB_NAME = "journal"
 DB_USER = "journal"
 PORT_FIRST = 54329
 PORT_LAST = 54339
-START_TIMEOUT_SEC = 30
+START_TIMEOUT_SEC = 60
 DEFAULT_PGSQL_DIR = Path(r"C:\Program Files\PostgreSQL\17")
 SECRET_LENGTH = 32
 
@@ -139,19 +139,31 @@ def requested_root() -> Path:
 
 
 def _restrict_to_current_user(path: Path) -> None:
-    """У ProgramData каталог за замовчуванням читають інші — залишаємо доступ лише власнику."""
-    try:
-        import getpass
+    """У ProgramData каталог за замовчуванням читають інші — залишаємо доступ лише власнику.
 
-        subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{getpass.getuser()}:(OI)(CI)F"],
+    Fail closed: якщо обмежити доступ не вдалося, дані туди не кладемо.
+    """
+    import getpass
+
+    icacls = Path(os.environ.get("SystemRoot") or r"C:\Windows") / "System32" / "icacls.exe"
+    try:
+        result = subprocess.run(
+            [str(icacls), str(path), "/inheritance:r", "/grant:r", f"{getpass.getuser()}:(OI)(CI)F"],
             capture_output=True,
             creationflags=_CREATE_NO_WINDOW,
             timeout=30,
             check=False,
         )
+        failed = result.returncode != 0
     except Exception:  # noqa: BLE001
-        log.warning("Не вдалося обмежити доступ до %s", path, exc_info=True)
+        log.error("icacls не запустився", exc_info=True)
+        failed = True
+    if failed:
+        log.error("Не вдалося обмежити доступ до запасної папки даних")
+        raise EmbeddedDbError(
+            "Не вдалося захистити запасну папку для даних журналу. "
+            "Встановіть програму й дані в папку з латинською назвою (без кирилиці)."
+        )
 
 
 def resolve_layout(
@@ -187,6 +199,14 @@ def resolve_layout(
 def generate_secret(length: int = SECRET_LENGTH) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def secret_present(secret_file: Path) -> bool:
+    """Файл db.secret існує й не порожній."""
+    try:
+        return bool(secret_file.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return False
 
 
 def load_or_create_secret(secret_file: Path) -> str:
@@ -239,17 +259,21 @@ def build_url(password: str, port: int) -> str:
 # ---------------------------------------------------------------- виклики PostgreSQL
 
 def _run(cmd: list[str], timeout: int = 120, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=_CREATE_NO_WINDOW,
-        timeout=timeout,
-        check=False,
-        **kwargs,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
+            timeout=timeout,
+            check=False,
+            **kwargs,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("Команда PostgreSQL не завершилась за %s с: %s", timeout, Path(cmd[0]).name)
+        raise EmbeddedDbError("База даних не відповіла вчасно. Деталі — у журналі.") from None
 
 
 def _tail(path: Path, lines: int = 15) -> str:
@@ -278,6 +302,7 @@ class EmbeddedDb:
         self.bin = safe / "bin"
         self.url: str | None = None
         self.port: int | None = None
+        self.started_by_us = False  # сервер запустили ми — лише тоді вправі його зупиняти
 
     # -- допоміжне
     def _exe(self, name: str) -> str:
@@ -332,42 +357,60 @@ class EmbeddedDb:
         self.layout.port_file.write_text(str(port), encoding="ascii")
         logfile = self.layout.logs / "postgres.log"
         log.info("Запуск PostgreSQL на порту %s", port)
-        # stdout/stderr у DEVNULL: сервер-нащадок успадковує дескриптори, і канал не закрився б.
-        result = subprocess.run(
-            [
-                self._exe("pg_ctl"), "start", "-w", "-t", str(START_TIMEOUT_SEC),
-                "-D", str(self.layout.pgdata),
-                "-l", str(logfile),
-                "-o", f"-p {port} -c listen_addresses=127.0.0.1",
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=_CREATE_NO_WINDOW,
-            timeout=START_TIMEOUT_SEC + 30,
-            check=False,
-        )
-        if result.returncode != 0:
-            log.error("pg_ctl start: код %s; кінець postgres.log:\n%s", result.returncode, _tail(logfile))
+        self.started_by_us = True  # навіть при збої: напівзапущений сервер теж зупиняємо самі
+        try:
+            # stdout/stderr у DEVNULL: сервер-нащадок успадковує дескриптори, і канал не закрився б.
+            result = subprocess.run(
+                [
+                    self._exe("pg_ctl"), "start", "-w", "-t", str(START_TIMEOUT_SEC),
+                    "-D", str(self.layout.pgdata),
+                    "-l", str(logfile),
+                    "-o", f"-p {port} -c listen_addresses=127.0.0.1",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW,
+                timeout=START_TIMEOUT_SEC + 30,
+                check=False,
+            )
+            returncode = result.returncode
+        except subprocess.TimeoutExpired:
+            log.error("pg_ctl start не завершився вчасно")
+            returncode = -1
+        if returncode != 0 and self.is_running():
+            # pg_ctl міг спізнитися з відповіддю, хоча сервер уже піднявся
+            log.warning("pg_ctl start: код %s, але сервер працює", returncode)
+            returncode = 0
+        if returncode != 0:
+            log.error("pg_ctl start: код %s; кінець postgres.log:\n%s", returncode, _tail(logfile))
             raise EmbeddedDbError("Не вдалося запустити базу даних. Деталі — у журналі.")
         return port
 
     def ensure_database(self, password: str, port: int) -> None:
         import psycopg
 
-        with psycopg.connect(
-            host="127.0.0.1", port=port, user=DB_USER, password=password,
-            dbname="postgres", autocommit=True, connect_timeout=10,
-        ) as conn:
-            exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,)).fetchone()
-            if not exists:
-                log.info("Створюю базу %s", DB_NAME)
-                conn.execute(f'CREATE DATABASE "{DB_NAME}" ENCODING \'UTF8\' TEMPLATE template0')
+        try:
+            with psycopg.connect(
+                host="127.0.0.1", port=port, user=DB_USER, password=password,
+                dbname="postgres", autocommit=True, connect_timeout=10,
+            ) as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,)
+                ).fetchone()
+                if not exists:
+                    log.info("Створюю базу %s", DB_NAME)
+                    conn.execute(f'CREATE DATABASE "{DB_NAME}" ENCODING \'UTF8\' TEMPLATE template0')
+        except psycopg.Error as error:
+            log.error("Не вдалося підключитися до вбудованої бази: %s", type(error).__name__)
+            raise EmbeddedDbError(
+                "Не вдалося підключитися до бази даних. Якщо це повторюється — перезавантажте "
+                "комп'ютер. Деталі — у журналі."
+            ) from None
 
     def ensure_running(self) -> str:
         """Піднімає сервер (за потреби — initdb) і повертає URL бази. Міграції — окремо."""
-        password_known = self.layout.secret_file.exists()
-        if self.is_initialized() and not password_known:
+        if self.is_initialized() and not secret_present(self.layout.secret_file):
             raise EmbeddedDbError(
                 "Знайдено дані бази, але немає файлу з паролем (db.secret). "
                 "Відновіть файл із резервної копії."
@@ -379,7 +422,7 @@ class EmbeddedDb:
             port = self.running_port()
             if port is None:
                 raise EmbeddedDbError("Сервер бази вже запущено, але порт невідомий.")
-            log.info("Сервер уже працює (порт %s) — використовую його", port)
+            log.info("Сервер уже працює (порт %s) — використовую його, зупиняти не буду", port)
         else:
             port = self.start()
         self.port = port
@@ -388,12 +431,21 @@ class EmbeddedDb:
         return self.url
 
     def stop(self) -> None:
-        if self.url is None and not self.is_initialized():
+        """Зупиняє сервер лише якщо його запустили ми (чужий сервер не чіпаємо)."""
+        if not self.started_by_us:
             return
         result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
         if result.returncode not in (0, 3):  # 3 — сервер і так не працював
             log.warning("pg_ctl stop: код %s", result.returncode)
+        self.started_by_us = False
         self.url = None
+
+    def force_stop(self) -> bool:
+        """Зупиняє сервер незалежно від того, хто його запустив (для інсталятора). True — не працює."""
+        result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
+        self.started_by_us = False
+        self.url = None
+        return result.returncode in (0, 3)
 
 
 # ---------------------------------------------------------------- міграції
@@ -409,7 +461,14 @@ def upgrade_schema(url: str) -> None:
     cfg.attributes["database_url"] = url
     cfg.attributes["skip_logging_config"] = True
     log.info("Міграції: alembic upgrade head")
-    command.upgrade(cfg, "head")
+    try:
+        command.upgrade(cfg, "head")
+    except Exception as error:  # noqa: BLE001
+        log.error("Міграція не вдалася: %s", type(error).__name__, exc_info=True)
+        raise EmbeddedDbError(
+            "Не вдалося оновити структуру бази даних. Деталі — у журналі. "
+            "Якщо в базі вже були дані, їх копію перед оновленням збережено у папці резервних копій."
+        ) from None
 
 
 def script_head() -> str | None:
@@ -497,6 +556,14 @@ def ensure_running() -> str:
         atexit.register(stop)
     _instance = db
     return url
+
+
+def stop_server_for_installer() -> bool:
+    """`--stop-server`: зупиняє сервер цієї установки (перед оновленням і видаленням). True — не працює."""
+    layout = resolve_layout()
+    if not (layout.pgdata / "PG_VERSION").exists():
+        return True
+    return EmbeddedDb(layout).force_stop()
 
 
 def stop() -> None:

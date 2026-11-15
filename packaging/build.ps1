@@ -11,13 +11,21 @@ Set-Location $root
 $python = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) { $python = "python" }
 
+# Single version source: pyproject.toml (passed to the installer below).
+$version = (Select-String -Path (Join-Path $root "pyproject.toml") -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+if (-not $version) { throw "version not found in pyproject.toml" }
+"Version: $version"
+
 # PyInstaller may be installed only for the system Python: make it importable from the venv.
-$sysSite = Join-Path (Split-Path -Parent (Get-Command python).Source) "Lib\site-packages"
 $ErrorActionPreference = "Continue"
 & $python -c "import PyInstaller" 2>$null
 $haveIt = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = "Stop"
-if (-not $haveIt) { $env:PYTHONPATH = $sysSite }
+if (-not $haveIt) {
+    $sysPython = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $sysPython) { throw "PyInstaller is not installed for the venv and no system Python was found" }
+    $env:PYTHONPATH = Join-Path (Split-Path -Parent $sysPython.Source) "Lib\site-packages"
+}
 
 Remove-Item -Recurse -Force (Join-Path $root "build"), (Join-Path $root "dist") -ErrorAction SilentlyContinue
 & $python -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging\journal.spec
@@ -36,6 +44,10 @@ Get-ChildItem (Join-Path $dest "bin") -File | Where-Object {
 } | Remove-Item -Force
 Get-ChildItem (Join-Path $dest "share") -Directory -Recurse -Filter "doc" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 Remove-Item -Recurse -Force (Join-Path $dest "share\locale") -ErrorAction SilentlyContinue
+# PostgreSQL licence travels with the binaries (into dist and so into the installer).
+$licence = Join-Path $PgSource "server_license.txt"
+if (-not (Test-Path $licence)) { throw "PostgreSQL licence file not found: $licence" }
+Copy-Item -Force $licence (Join-Path $dest "LICENSE-PostgreSQL.txt")
 
 $size = (Get-ChildItem (Join-Path $root "dist\TeacherJournal") -Recurse -File | Measure-Object Length -Sum).Sum
 "dist\TeacherJournal size: {0:N0} MB" -f ($size / 1MB)
@@ -47,7 +59,7 @@ $iscc = @(
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($iscc) {
-    & $iscc (Join-Path $root "packaging\installer.iss")
+    & $iscc "/DAppVersion=$version" (Join-Path $root "packaging\installer.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 } else {
     "Inno Setup not found - installer skipped"

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import threading
+import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -95,6 +96,18 @@ def setup_logging(directory: Path | None = None) -> Path | None:
     setattr(file_handler, _HANDLER_TAG, True)
     root.addHandler(file_handler)
     return log_path
+
+
+def log_failure(message: str) -> None:
+    """Для обробників помилок у UI: в журнал іде стек і ТИП винятку, але не його текст
+    (у тексті можуть бути шляхи, імена файлів чи дані). Викликати всередині `except`."""
+    exc_type, _value, tb = sys.exc_info()
+    logging.error(
+        "%s: %s\n%s",
+        message,
+        exc_type.__name__ if exc_type else "?",
+        "".join(traceback.format_tb(tb)).rstrip(),
+    )
 
 
 def install_excepthook() -> None:

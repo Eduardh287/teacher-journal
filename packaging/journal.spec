@@ -26,6 +26,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(ROOT / "alembic.ini"), "."),
+        (str(ROOT / "packaging" / "icon.ico"), "."),
         (str(ROOT / "migrations"), "migrations"),
     ],
     hiddenimports=[
@@ -54,5 +55,6 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=str(ROOT / "packaging" / "icon.ico"),
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="TeacherJournal")
