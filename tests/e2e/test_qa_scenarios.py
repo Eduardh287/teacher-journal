@@ -34,7 +34,6 @@ from journal.ui.classes_page import _ClassCard
 from journal.ui.journal_dialogs import (
     CommentDialog,
     DeleteJournalDialog,
-    DeleteLessonDialog,
     JournalSettingsDialog,
     LessonDialog,
     NewJournalDialog,
@@ -621,7 +620,7 @@ def test_s4_archived_class_and_restore(window, teacher, session, drive, qtbot, m
     journals.open_journal(alg.id)
     assert journals.subtitle_label.text() == f"{YEAR} · клас в архіві"
     assert not journals.delete_journal_action.isEnabled()
-    assert journals.new_lesson_btn.isVisible() and not journals.grid_view.grid_model.read_only
+    assert journals.new_lesson_btn.isVisible()
 
     def past_lesson(dlg):
         dlg.date_edit.setDate(QDate(2026, 9, 15))
@@ -1144,7 +1143,6 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
     # --- Esc у кожному діалозі ---
     items = RolloverService(session).plan(tid, AUG_1)
     assert items
-    delete_lesson_info = next(x for x in service.get_grid(tid, alg.id, 1).lessons if x.id == lesson.id)
     journal_info = next(j for j in service.list_journals(tid, True) if j.id == old_journal.id)
     for make in (
         lambda: ClassDialog(tid),
@@ -1154,7 +1152,6 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
         lambda: NewJournalDialog(tid, factory),
         lambda: JournalSettingsDialog(tid, factory, journal_info),
         lambda: CommentDialog("текст"),
-        lambda: DeleteLessonDialog(delete_lesson_info),
         lambda: DeleteJournalDialog(journal_info, 3),
         lambda: RolloverDialog(items),
     ):
@@ -1178,7 +1175,6 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
             RolloverDialog(items),
             ["галочка «Створити такі самі журнали для нових класів»", "кнопка «Пізніше»", "кнопка «Гаразд»"],
         ),
-        "DeleteLessonDialog": (DeleteLessonDialog(delete_lesson_info), ["поле «видалити»", "кнопка «Скасувати»"]),
     }
     for name, (dlg, expected) in chains.items():
         assert focus_chain(show_dialog(dlg, qtbot)) == expected, name
@@ -1234,7 +1230,7 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
     dlg.close()
 
     # --- діалоги з введенням слова: за замовчуванням «Скасувати» — Enter навіть після слова нічого не видаляє ---
-    for make in (lambda: DeleteLessonDialog(delete_lesson_info), lambda: DeleteJournalDialog(journal_info, 3)):
+    for make in (lambda: DeleteJournalDialog(journal_info, 3),):
         dlg = show_dialog(make(), qtbot)
         dlg.confirm_edit.setText("видалити")
         assert dlg.delete_button.isEnabled()

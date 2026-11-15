@@ -236,9 +236,6 @@ class BackupService:
 
     # ------------------------------------------------------------ допоміжне
 
-    def tools_available(self) -> bool:
-        return (self._pg_bin / "pg_dump.exe").exists() and (self._pg_bin / "pg_restore.exe").exists()
-
     def _exe(self, name: str) -> str:
         exe = self._pg_bin / f"{name}.exe"
         if not exe.exists():

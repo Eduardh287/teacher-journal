@@ -460,13 +460,11 @@ class JournalsPage(QWidget):
             return False
         self._grid = grid
         self.grid_view.set_grid(grid)
-        self.lesson_panel.set_items(grid.lessons, grid.extra_columns, False, grid.columns)
+        self.lesson_panel.set_items(grid.lessons, grid.extra_columns, grid.columns)
         info = grid.journal
         self.title_label.setText(f"{info.class_name} · {info.subject_name}")
         self.subtitle_label.setText(info.school_year + (" · клас в архіві" if info.class_archived else ""))
         self.semester_buttons[grid.semester].setChecked(True)
-        self.new_lesson_btn.setVisible(True)
-        self.new_lesson_shortcut.setEnabled(True)
         self.delete_journal_action.setEnabled(not info.class_archived)
         self.delete_journal_action.setToolTip(
             "Журнал архівного класу не можна видалити" if info.class_archived else ""

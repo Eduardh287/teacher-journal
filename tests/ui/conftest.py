@@ -7,7 +7,7 @@ from contextlib import nullcontext  # noqa: E402
 from datetime import date  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, Qt  # noqa: E402
 from PySide6.QtGui import QKeyEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -21,7 +21,10 @@ from tests.fakes.fake_journal_service import FakeJournalService  # noqa: E402
 def _fast_chain(monkeypatch, qapp):
     """Коротке вікно для ланцюжка 1→10/11/12 і світла тема."""
     monkeypatch.setattr(journal_grid, "GRADE_CHAIN_MS", 80)
-    theme.apply_theme(qapp, "light")
+    if theme.current_theme() != "light" or not qapp.styleSheet():  # тема вже світла — не перестилізовуємо все
+        theme.apply_theme(qapp, "light")
+    yield
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # справді знищити віджети тесту
 
 
 @pytest.fixture

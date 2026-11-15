@@ -108,15 +108,6 @@ class JournalRepository:
     def get_lesson(self, lesson_id: int) -> Lesson | None:
         return self.session.get(Lesson, lesson_id)
 
-    def lessons(self, journal_id: int, semester: int) -> list[Lesson]:
-        return list(
-            self.session.scalars(
-                select(Lesson)
-                .where(Lesson.journal_id == journal_id, Lesson.semester == semester)
-                .order_by(Lesson.lesson_date, Lesson.id)
-            )
-        )
-
     def entry_counts(self, lesson_ids: list[int]) -> dict[int, int]:
         if not lesson_ids:
             return {}

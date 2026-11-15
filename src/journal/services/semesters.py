@@ -95,8 +95,3 @@ def rollover_due(school_year: str, today: date) -> bool:
     """
     second_year = int(school_year[:4]) + 1
     return today >= date(second_year, ROLLOVER_MONTH, 1)
-
-
-def next_school_year(school_year: str) -> str:
-    first = int(school_year[:4]) + 1
-    return f"{first}-{first + 1}"

@@ -9,7 +9,6 @@ from journal.services.semesters import (
     SemesterBoundaries,
     SemesterError,
     VacationDateError,
-    next_school_year,
     rollover_due,
 )
 
@@ -69,8 +68,7 @@ def test_rollover_due_edges():
     assert not rollover_due("2026-2027", date(2026, 9, 1))
 
 
-def test_next_school_year_and_label():
-    assert next_school_year("2026-2027") == "2027-2028"
+def test_boundaries_label():
     assert DEFAULT_BOUNDARIES.label() == "I: вересень–грудень · II: січень–червень"
 
 

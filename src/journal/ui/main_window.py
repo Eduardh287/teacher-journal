@@ -179,39 +179,6 @@ class MainWindow(QMainWindow):
         layout.addSpacing(24)
         return page, layout
 
-    def _empty_state(self, icon_name: str, title: str, text: str, action_text: str) -> QFrame:
-        """Картка «тут поки порожньо» з кнопкою дії."""
-        frame, layout = card()
-        layout.setContentsMargins(40, 48, 40, 48)
-
-        badge = QLabel()
-        badge.setObjectName("Avatar")  # той самий м'який індиго-кружок
-        badge.setFixedSize(56, 56)
-        badge.setStyleSheet("border-radius: 28px;")
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._icon_refreshers.append(
-            lambda: badge.setPixmap(icons.pixmap(icon_name, theme.color("accent"), size=26))
-        )
-        layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(6)
-
-        heading = label(title, object_name="EmptyTitle")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(heading)
-        hint = label(text, muted=True)  # коротка підказка в один рядок
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(10)
-
-        action = button(action_text, variant="primary")
-        action.setEnabled(False)
-        action.setToolTip("З'явиться на наступному етапі розробки")
-        self._icon_refreshers.append(
-            lambda: action.setIcon(icons.icon("plus", theme.color("muted"), size=16))
-        )
-        layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignHCenter)
-        return frame
-
     def _build_settings_page(self) -> QWidget:
         page, layout = self._page("Налаштування", "Вигляд застосунку, семестри, довідник предметів, обліковий запис і резервні копії.")
 

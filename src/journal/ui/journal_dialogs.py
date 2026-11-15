@@ -378,20 +378,6 @@ class _TypedConfirmDialog(QDialog):
         self.delete_button.setEnabled(text.strip().lower() == self._word)
 
 
-class DeleteLessonDialog(_TypedConfirmDialog):
-    """Видалення уроку з оцінками (підтвердження словом «видалити»)."""
-
-    def __init__(self, lesson: LessonInfo, parent: QWidget | None = None) -> None:
-        self.lesson = lesson
-        super().__init__(
-            "Видалити урок",
-            "Видалити урок?",
-            f"Урок {lesson.lesson_date:%d.%m.%Y} містить відміток і оцінок: {lesson.entry_count}. "
-            "Їх буде видалено безповоротно.",
-            parent,
-        )
-
-
 class DeleteJournalDialog(_TypedConfirmDialog):
     """Видалення журналу разом з усіма уроками, відмітками та оцінками."""
 

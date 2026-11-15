@@ -49,7 +49,6 @@ HEADER_HEIGHT = 46
 LessonRole = Qt.ItemDataRole.UserRole + 1   # LessonInfo заголовка стовпця
 CellRole = Qt.ItemDataRole.UserRole + 2     # CellInfo клітинки
 PendingRole = Qt.ItemDataRole.UserRole + 3  # True, якщо в клітинці очікує друга цифра
-StudentRole = Qt.ItemDataRole.UserRole + 4  # StudentInfo заголовка рядка
 ComputedRole = Qt.ItemDataRole.UserRole + 5  # ComputedCell клітинки (або None) — етап 6
 ColumnRole = Qt.ItemDataRole.UserRole + 6    # GridColumn заголовка стовпця
 ExtraRole = Qt.ItemDataRole.UserRole + 7     # ExtraColumnInfo заголовка (для «Тем»/«Зош») або None
@@ -148,7 +147,6 @@ class JournalGridModel(QAbstractTableModel):
         self.semester = 1
         self.cells: dict[tuple[int, int], CellInfo] = {}
         self.computed: dict[tuple[int, ComputedKey], ComputedCell] = {}
-        self.read_only = False
         self.pending: tuple[int, int] | None = None  # (рядок, стовпець) із очікуваною «1»
 
     def set_grid(self, grid: GridData) -> None:
@@ -160,8 +158,6 @@ class JournalGridModel(QAbstractTableModel):
         self.semester = grid.semester
         self.cells = dict(grid.cells)
         self.computed = dict(grid.computed)
-        # Архівний журнал редагується (рішення автора); лише рядки вибулих учнів — для перегляду.
-        self.read_only = False
         self.pending = None
         self.endResetModel()
 
@@ -215,7 +211,7 @@ class JournalGridModel(QAbstractTableModel):
             self.dataChanged.emit(self.index(row, 0), self.index(row, len(self.columns) - 1))
 
     def is_editable(self, row: int) -> bool:
-        return not self.read_only and not self.students[row].archived
+        return not self.students[row].archived
 
     def column_of(self, lesson_id: int) -> int:
         return next((i for i, c in enumerate(self.columns) if c.kind == "lesson" and c.id == lesson_id), -1)
@@ -311,8 +307,6 @@ class JournalGridModel(QAbstractTableModel):
             if student.archived:
                 return f"вибув · {student.full_name}"
             return f"{student.position}. {student.full_name}"
-        if role == StudentRole:
-            return student
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         if role == Qt.ItemDataRole.ForegroundRole and student.archived:
@@ -733,12 +727,12 @@ class JournalGridView(QTableView):
 
     def _on_header_double_click(self, section: int) -> None:
         column = self._column_at(section)
-        if column is not None and column.kind == "lesson" and not self.grid_model.read_only:
+        if column is not None and column.kind == "lesson":
             self.lesson_edit_requested.emit(column.id)
 
     def _on_header_menu(self, pos: QPoint) -> None:
         column = self._column_at(self.horizontalHeader().logicalIndexAt(pos))
-        if column is None or column.kind not in ("lesson", "thematic", "notebook") or self.grid_model.read_only:
+        if column is None or column.kind not in ("lesson", "thematic", "notebook"):
             return
         menu = QMenu(self)
         if column.kind == "lesson":

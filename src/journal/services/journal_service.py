@@ -463,12 +463,10 @@ class JournalService:
             raise JournalError(ARCHIVED_WRITE)
         return journal
 
-    def _own_lesson(self, teacher_id: int, lesson_id: int, editable: bool = False) -> Lesson:
+    def _own_lesson(self, teacher_id: int, lesson_id: int) -> Lesson:
         lesson = self.repo.get_lesson(lesson_id)
         if lesson is None or lesson.journal.school_class.teacher_id != teacher_id:
             raise LessonNotFound("Урок не знайдено")
-        if editable and lesson.journal.school_class.archived:
-            raise JournalError(ARCHIVED_WRITE)
         return lesson
 
     def _own_column(self, teacher_id: int, column_id: int) -> ExtraColumn:

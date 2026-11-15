@@ -19,7 +19,7 @@ from datetime import date  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from journal import db, logging_setup  # noqa: E402
@@ -87,9 +87,12 @@ def _isolation(session, monkeypatch, qapp):
         monkeypatch.setattr(module, "date", _FrozenDate)
     monkeypatch.setattr(journal_grid, "GRADE_CHAIN_MS", 80)
     monkeypatch.setattr(theme, "save_theme_name", lambda name: None)  # не писати в реєстр автора
-    theme.apply_theme(qapp, "light")
+    if theme.current_theme() != "light" or not qapp.styleSheet():  # тема вже світла — не перестилізовуємо все
+        theme.apply_theme(qapp, "light")
     yield
-    theme.apply_theme(qapp, "light")
+    if theme.current_theme() != "light":
+        theme.apply_theme(qapp, "light")
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # справді знищити віджети тесту
 
 
 @pytest.fixture(autouse=True)
