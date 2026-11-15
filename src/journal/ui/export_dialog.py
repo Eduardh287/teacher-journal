@@ -17,13 +17,13 @@ from journal.services.export_service import (
     PRESET_CURRENT,
     PRESET_NAMES,
     ExportError,
+    ExportTable,
     build_export_table,
     period_presets,
     suggest_file_name,
 )
 from journal.services.journal_types import JournalApi, JournalError, JournalInfo
 from journal.logging_setup import log_failure
-from journal.services.xlsx_writer import write_export
 from journal.ui import theme
 from journal.ui.settings_cards import open_folder
 from journal.ui.widgets import button, field, label
@@ -188,6 +188,13 @@ def show_notice(parent: QWidget | None, text: str) -> None:
 
 
 # ---------- сценарій ----------
+
+
+def write_export(table: ExportTable, path: Path) -> Path:
+    """Запис .xlsx; openpyxl вантажиться лише тут, щоб не сповільнювати запуск застосунку."""
+    from journal.services.xlsx_writer import write_export as write
+
+    return write(table, path)
 
 
 def export_journal(parent: QWidget | None, api_factory: ApiFactory, teacher_id: int, info: JournalInfo) -> Path | None:

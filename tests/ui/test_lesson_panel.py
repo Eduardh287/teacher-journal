@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QDialog
 from journal.services.class_service import default_school_year
 from journal.services.journal_types import ExtraColumnInfo, JournalError, LessonInfo
 from journal.ui import journals_page
-from journal.ui.journal_dialogs import DeleteJournalDialog, DeleteLessonDialog, LessonDialog
+from journal.ui.journal_dialogs import DeleteJournalDialog, LessonDialog
 from journal.ui.lesson_panel import NO_TOPIC_TEXT, lesson_row_text
 from tests.fakes.fake_journal_service import FakeJournalService
 from tests.ui.conftest import type_text
@@ -145,7 +145,7 @@ def test_double_click_on_any_cell_requests_edit_of_that_lesson(page, qtbot):
 
     panel = LessonPanel()  # окрема панель: сторінка відкрила б справжній діалог
     qtbot.addWidget(panel)
-    panel.set_lessons(page.grid_view.grid_model.lessons, read_only=False)
+    panel.set_items(page.grid_view.grid_model.lessons, [])
     with qtbot.waitSignal(panel.lesson_edit_requested) as edit:
         panel.table.cellDoubleClicked.emit(1, 0)
     assert edit.args == [L2]
@@ -337,13 +337,13 @@ def test_delete_journal_uses_fresh_lesson_count(page, fake, monkeypatch):
 
 # --- етап 6: панель напряму (без сторінки й фейків) ---
 
-def make_panel(qtbot, lessons, extra=(), read_only=False):
+def make_panel(qtbot, lessons, extra=()):
     from journal.ui.lesson_panel import LessonPanel
 
     panel = LessonPanel()
     qtbot.addWidget(panel)
     panel.resize(420, 400)
-    panel.set_items(lessons, list(extra), read_only)
+    panel.set_items(lessons, list(extra))
     panel.show()
     return panel
 
@@ -479,15 +479,6 @@ def test_lesson_menu_still_edit_and_delete(qtbot, monkeypatch):
     assert deletes == [1] and edits == [1]
 
 
-def test_read_only_panel_has_no_menu_and_no_editor(qtbot, monkeypatch):
-    d = date(2026, 9, 1)
-    panel = make_panel(qtbot, [lesson(1, d, "А", number=1)], [column(10, "thematic", d)], read_only=True)
-    stub_menu(monkeypatch)  # будь-яке відкриття меню провалює тест
-    panel._on_menu(panel.table.visualItemRect(panel.table.item(1, 0)).center())
-    panel.table.cellDoubleClicked.emit(0, 3)
-    assert panel.homework_editor() is None
-
-
 def test_homework_double_click_opens_editor_and_enter_saves(qtbot):
     panel = make_panel(qtbot, [lesson(1, date(2026, 9, 1), "А", number=1, homework="старе")])
     edit_requests = []
@@ -540,7 +531,7 @@ def test_repopulate_closes_open_editor(qtbot):
     panel = make_panel(qtbot, [lesson(1, date(2026, 9, 1), "А", number=1)])
     panel.table.cellDoubleClicked.emit(0, 3)
     assert panel.homework_editor() is not None
-    panel.set_items([lesson(1, date(2026, 9, 1), "А", number=1, homework="Нове")], [], False)
+    panel.set_items([lesson(1, date(2026, 9, 1), "А", number=1, homework="Нове")], [])
     assert panel.homework_editor() is None
     assert panel.table.item(0, 3).text() == "Нове"
 
@@ -554,7 +545,7 @@ def test_long_homework_is_single_line_with_full_tooltip(qtbot):
     assert table.rowHeight(0) < 80  # не розтягує рядок на кілька рядків тексту
 
 
-def test_select_lesson_skips_separators_and_set_lessons_compat(qtbot):
+def test_select_lesson_skips_separators(qtbot):
     d1, d2 = date(2026, 9, 1), date(2026, 9, 8)
     panel = make_panel(
         qtbot, [lesson(1, d1, "А", number=1), lesson(2, d2, "Б", number=2)], [column(10, "thematic", d1)]
@@ -562,8 +553,6 @@ def test_select_lesson_skips_separators_and_set_lessons_compat(qtbot):
     panel.select_lesson(2)
     assert panel.selected_lesson_id() == 2
     assert [i.row() for i in panel.table.selectionModel().selectedRows()] == [2]
-    panel.set_lessons([lesson(1, d1, "А", number=1)], False)  # стара сторінка: без стовпчиків
-    assert panel.table.rowCount() == 1
 
 
 def test_homework_focus_loss_saves_text(qtbot):

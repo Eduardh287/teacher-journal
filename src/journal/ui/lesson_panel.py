@@ -160,7 +160,6 @@ class LessonPanel(QWidget):
         self.setObjectName("LessonPanel")
         self._rows: list[LessonInfo | ExtraColumnInfo] = []
         self._lessons: list[LessonInfo] = []
-        self._read_only = False
         self._selected_id: int | None = None
         self._editor: _HomeworkEdit | None = None
         self._editor_row = -1
@@ -219,18 +218,12 @@ class LessonPanel(QWidget):
         self,
         lessons: list[LessonInfo],
         extra_columns: list[ExtraColumnInfo],
-        read_only: bool,
         columns: list | None = None,
     ) -> None:
         """Перебудовує список (єдина точка оновлення); columns — порядок GridData.columns."""
         self._lessons = list(lessons)
         self._rows = merge_rows(self._lessons, list(extra_columns), columns)
-        self._read_only = read_only
         self._populate()
-
-    def set_lessons(self, lessons: list[LessonInfo], read_only: bool) -> None:
-        """Сумісність зі старою сторінкою: лише уроки, без стовпчиків."""
-        self.set_items(lessons, [], read_only)
 
     def refresh_theme(self) -> None:
         """Перемальовує кольори рядків після зміни теми."""
@@ -287,7 +280,7 @@ class LessonPanel(QWidget):
     def _fill_separator_row(self, row: int, column: ExtraColumnInfo, muted: QBrush) -> None:
         name = EXTRA_COLUMN_TYPES[column.kind][0]
         tint = {"thematic": "col_thematic_soft", "notebook": "col_notebook_soft"}.get(column.kind)
-        tip = f"{name} {column.ordinal}" + ("" if self._read_only else "\nПравий клік — перемістити або видалити")
+        tip = f"{name} {column.ordinal}" + ("\nПравий клік — перемістити або видалити")
         for index in range(4):
             item = QTableWidgetItem(name if index == 0 else "")
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # без виділення й без № та дати
@@ -345,9 +338,9 @@ class LessonPanel(QWidget):
     # ------------------------------------------------------------------
 
     def start_homework_edit(self, row: int) -> bool:
-        """Відкриває поле «Д/з» у рядку уроку. False — рядок не урок або панель лише для читання."""
+        """Відкриває поле «Д/з» у рядку уроку. False — рядок не урок."""
         entry = self._entry_at(row)
-        if self._read_only or not isinstance(entry, LessonInfo):
+        if not isinstance(entry, LessonInfo):
             return False
         self._drop_editor()
         editor = _HomeworkEdit(self.table.viewport())
@@ -406,7 +399,7 @@ class LessonPanel(QWidget):
 
     def _on_double_clicked(self, row: int, column: int) -> None:
         entry = self._entry_at(row)
-        if self._read_only or not isinstance(entry, LessonInfo):
+        if not isinstance(entry, LessonInfo):
             return
         if column == HOMEWORK_COL:
             self.start_homework_edit(row)
@@ -416,7 +409,7 @@ class LessonPanel(QWidget):
     def _on_menu(self, pos: QPoint) -> None:
         row = self.table.rowAt(pos.y())
         entry = self._entry_at(row)
-        if self._read_only or entry is None:
+        if entry is None:
             return
         menu = QMenu(self)
         if isinstance(entry, LessonInfo):

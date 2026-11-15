@@ -57,7 +57,6 @@ from journal.ui.auth_dialogs import LoginDialog, RegisterDialog  # noqa: E402
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog  # noqa: E402
 from journal.ui.journal_dialogs import (  # noqa: E402
     DeleteJournalDialog,
-    DeleteLessonDialog,
     JournalSettingsDialog,
     LessonDialog,
     NewJournalDialog,
@@ -740,7 +739,6 @@ state("lesson_vacation_error", lesson_error((2026, 7, 15)), size=None)
 state("lesson_outside_year_error", lesson_error((2025, 10, 14)), size=None)
 
 # 10. Видалення уроку й журналу
-state("delete_lesson_typed", lambda: DeleteLessonDialog(l9[0]), size=None)
 
 
 def build_delete_journal_typed():

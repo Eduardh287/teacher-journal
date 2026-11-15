@@ -223,19 +223,15 @@ def app_settings() -> QSettings:
     return QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "TeacherJournal", "TeacherJournal")
 
 
-def _settings() -> QSettings:
-    return app_settings()
-
-
 def load_theme_name() -> str:
     """Читає збережену тему; якщо значення некоректне — повертає світлу."""
-    name = _settings().value("theme", DEFAULT_THEME)
+    name = app_settings().value("theme", DEFAULT_THEME)
     return name if name in THEMES else DEFAULT_THEME
 
 
 def save_theme_name(name: str) -> None:
     """Запам'ятовує обрану тему між запусками."""
-    _settings().setValue("theme", name)
+    app_settings().setValue("theme", name)
 
 
 def current_theme() -> str:

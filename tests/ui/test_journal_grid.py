@@ -280,7 +280,6 @@ def test_archived_class_journal_is_editable(make_page):
     service = FakeJournalService(["Коваленко Олена"], class_archived=True)
     service.add_lesson(date(2025, 9, 2))
     page = make_page(service)
-    assert not page.grid_view.grid_model.read_only
     assert page.new_lesson_btn.isVisible()
     assert page.menu_btn.isVisible()
     assert not page.delete_journal_action.isEnabled()
