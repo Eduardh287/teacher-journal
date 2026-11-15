@@ -25,9 +25,13 @@ def acquire(root: Path | None = None) -> QLockFile | None:
     folder.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(folder / LOCK_FILE_NAME))
     lock.setStaleLockTime(0)  # застарілим вважаємо лише замок мертвого процесу, не за часом
-    if not lock.tryLock(0):
-        return None
-    return lock
+    if lock.tryLock(0):
+        return lock
+    # Замок міг лишитись від аварійно завершеного процесу: прибираємо лише застарілий і пробуємо ще раз.
+    lock.removeStaleLockFile()
+    if lock.tryLock(0):
+        return lock
+    return None
 
 
 def create_app_mutex() -> None:

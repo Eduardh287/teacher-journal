@@ -53,17 +53,40 @@ Filename: "{app}\{#AppExe}"; Description: "Запустити {#AppName}"; Flags
 Filename: "{app}\{#AppExe}"; Parameters: "--stop-server"; Flags: runhidden waituntilterminated; RunOnceId: "StopEmbeddedServer"
 
 [Code]
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{7B1E6F52-4C0D-4E8A-9E53-0F6D2A1B7C34}_is1';
+
+// True when the installed copy (HKCU uninstall entry of this AppId) is 0.9.0 or newer,
+// i.e. it has the --stop-server helper. Unknown or older (0.1.0 pilot) -> False.
+function InstalledHasStopHelper: Boolean;
+var
+  Installed: String;
+  Packed, Needed: Int64;
+begin
+  Result := False;
+  if not RegQueryStringValue(HKCU, UninstallKey, 'Inno Setup: App Version', Installed) then
+    if not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Installed) then
+      Exit;
+  if StrToVersion(Installed, Packed) and StrToVersion('0.9.0', Needed) then
+    Result := ComparePackedVersion(Packed, Needed) >= 0;
+end;
+
 // On upgrade (same AppId, same folder) stop the embedded server before files are replaced.
+// The helper is called only for installed versions that have it: the 0.1.0 pilot would
+// ignore the argument and open its main window (the installer would wait for it forever).
+// Older versions have no embedded server; AppMutex/CloseApplications already ask to close the app.
 // The data folder is never touched. First start after the upgrade runs the backup + migration.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
   Helper: String;
 begin
-  Helper := ExpandConstant('{app}\{#AppExe}');
-  if FileExists(Helper) then
-    Exec(Helper, '--stop-server', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
+  Helper := ExpandConstant('{app}\{#AppExe}');
+  if FileExists(Helper) and InstalledHasStopHelper then
+    if Exec(Helper, '--stop-server', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      if ResultCode = 2 then  // the app holds its lock: it is open
+        Result := 'Закрийте «{#AppName}» і запустіть встановлення ще раз.';
 end;
 
 // Uninstall removes only files installed into {app}; the data folder is never touched.
