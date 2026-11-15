@@ -19,6 +19,14 @@ from PySide6.QtWidgets import (
 )
 
 from journal.services.class_service import StudentInfo
+from journal.services.grid_text import (  # noqa: F401 (cell_text, computed_text — публічні імена модуля)
+    EXTRA_COLUMN_TYPES,
+    FINAL_COLUMN_TITLES,
+    LESSON_TYPES,
+    NA_TEXT,
+    cell_text,
+    computed_text,
+)
 from journal.services.journal_types import (
     AttendanceCode,
     CellInfo,
@@ -30,7 +38,7 @@ from journal.services.journal_types import (
     LessonInfo,
 )
 from journal.ui import theme
-from journal.ui.journal_dialogs import EXTRA_COLUMN_TYPES, FINAL_COLUMN_TITLES, LESSON_TYPES, CommentDialog
+from journal.ui.journal_dialogs import CommentDialog
 
 GRADE_CHAIN_MS = 500  # скільки чекаємо другу цифру після «1» (10/11/12)
 COLUMN_WIDTH = 56
@@ -45,8 +53,6 @@ StudentRole = Qt.ItemDataRole.UserRole + 4  # StudentInfo заголовка р�
 ComputedRole = Qt.ItemDataRole.UserRole + 5  # ComputedCell клітинки (або None) — етап 6
 ColumnRole = Qt.ItemDataRole.UserRole + 6    # GridColumn заголовка стовпця
 ExtraRole = Qt.ItemDataRole.UserRole + 7     # ExtraColumnInfo заголовка (для «Тем»/«Зош») або None
-
-NA_TEXT = "н/а"
 
 EMPTY_CELL = CellInfo("present", None, None)
 
@@ -75,17 +81,6 @@ SaveCell = Callable[[int, int, AttendanceCode, "int | None", "str | None"], "tup
 SaveOverride = Callable[[int, ComputedKey, "int | None", bool], "tuple[bool, dict[ComputedKey, ComputedCell] | None]"]
 
 
-def cell_text(cell: CellInfo) -> str:
-    """Текст клітинки: н / хв / з / «з 9» / оцінка."""
-    if cell.attendance == "absent":
-        return "н"
-    if cell.attendance == "sick":
-        return "хв"
-    if cell.attendance == "late":
-        return f"з {cell.grade}" if cell.grade is not None else "з"
-    return str(cell.grade) if cell.grade is not None else ""
-
-
 def grades_text(n: int) -> str:
     """«1 оцінка», «2 оцінки», «5 оцінок»."""
     if n % 100 in (11, 12, 13, 14):
@@ -101,17 +96,6 @@ def grades_text(n: int) -> str:
 
 def _mean_text(total: int, count: int) -> str:
     return f"{total / count:.2f}".replace(".", ",") if count else "—"
-
-
-def computed_text(kind: str, cell: ComputedCell | None) -> str:
-    """Текст обчислюваної клітинки: оцінка або «н/а» (порожньо, якщо нічого немає)."""
-    if cell is None:
-        return ""
-    if kind == "notebook":
-        return str(cell.value) if cell.value is not None else ""
-    if cell.is_na:
-        return NA_TEXT
-    return str(cell.value) if cell.value is not None else ""
 
 
 def computed_tooltip(kind: str, cell: ComputedCell | None) -> str | None:
