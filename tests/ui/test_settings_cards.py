@@ -81,6 +81,6 @@ def test_subjects_add_and_duplicate(qtbot):
     assert card.subject_edit.text() == "" and changed == [1]
     card.subject_edit.setText("Фізика")
     card.subject_edit.returnPressed.emit()
-    assert card.subject_error.isVisible()
-    assert card.subject_error.text() == "Предмет «Фізика» уже є"
+    assert card.error.isVisible()
+    assert card.error.text() == "Предмет «Фізика» уже є"
     assert changed == [1]

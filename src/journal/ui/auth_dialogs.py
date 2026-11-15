@@ -4,11 +4,11 @@ from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QWidget
 
 from journal.services.auth_service import AuthError, AuthService, CurrentUser
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import brand_mark, button, field, label
+from journal.ui.widgets import FormDialog, brand_mark, button, field, label
 
 DB_ERROR_TEXT = "Не вдалося підключитися до бази даних"
 LEGACY_CODE_LEAD_IN = "Тепер у програмі є код відновлення пароля."
@@ -37,19 +37,15 @@ def run_auth_action(action: Callable[[AuthService], Any]) -> Any:
     return result
 
 
-class RecoveryCodeDialog(QDialog):
+class RecoveryCodeDialog(FormDialog):
     """Показує код відновлення один раз. Закрити можна лише кнопкою «Я записала код»."""
 
     def __init__(self, code: str, parent: QWidget | None = None, lead_in: str = "") -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Код відновлення")
-        self.setFixedWidth(460)
+        super().__init__("Код відновлення", parent, heading="", width=460, fixed_width=True)
         self.code = code
         self._confirmed = False
 
-        body = QVBoxLayout(self)
-        body.setContentsMargins(32, 28, 32, 28)
-        body.setSpacing(14)
+        body = self.body
         if lead_in:
             body.addWidget(label(lead_in, wrap=True))
         body.addWidget(label("Ваш код відновлення", object_name="CardTitle"))
@@ -97,23 +93,12 @@ def show_recovery_code(parent: QWidget | None, code: str, lead_in: str = "") -> 
     RecoveryCodeDialog(code, parent, lead_in).exec()
 
 
-class _AuthDialog(QDialog):
+class _AuthDialog(FormDialog):
     """Спільна основа: логотип і заголовок, рядок помилки, безпечний виклик AuthService."""
 
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setFixedWidth(420)
+        super().__init__(title, parent, heading="", width=420, fixed_width=True, margins=(40, 36))
         self.current_user: CurrentUser | None = None
-
-        self.error_label = QLabel()
-        self.error_label.setProperty("error", True)
-        self.error_label.setWordWrap(True)
-        self.error_label.hide()
-
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(40, 36, 40, 36)
-        self.body.setSpacing(14)
         self.body.addWidget(brand_mark(48), alignment=Qt.AlignmentFlag.AlignHCenter)
         app_title = label("Електронний журнал", object_name="AppTitle")
         app_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -136,32 +121,13 @@ class _AuthDialog(QDialog):
             self.body.addWidget(widget)
         self.body.addWidget(self.error_label)
         self.body.addSpacing(6)
-        self.submit_button = button(submit_text, variant="primary")
-        self.submit_button.setDefault(True)  # Enter у будь-якому полі запускає дію
-        self.submit_button.setMinimumHeight(40)
-        self.submit_button.clicked.connect(on_submit)
-        self.body.addWidget(self.submit_button)
-
-    def show_error(self, text: str) -> None:
-        """Показує помилку прямо в діалозі (без спливаючих вікон)."""
-        self.error_label.setText(text)
-        self.error_label.show()
+        self.submit_button = self.add_submit(submit_text, on_submit)
 
     def run_db(self, action: Callable[[AuthService], Any]) -> tuple[bool, Any]:
-        """Виконує action в одній транзакції. Повертає (успіх, результат).
-
-        AuthError ловимо ПОЗА блоком with, щоб транзакція відкотилась.
-        """
-        try:
-            result = run_auth_action(action)
-        except AuthError as error:
-            self.show_error(str(error))
-            return False, None
-        except Exception:
-            logging.exception("Помилка під час звернення до бази даних")
-            self.show_error(DB_ERROR_TEXT)
-            return False, None
-        return True, result
+        """Виконує action в одній транзакції. Повертає (успіх, результат)."""
+        return self.run(
+            lambda: run_auth_action(action), AuthError, "Помилка під час звернення до бази даних", DB_ERROR_TEXT
+        )
 
 
 class RegisterDialog(_AuthDialog):

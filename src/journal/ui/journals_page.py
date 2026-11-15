@@ -10,20 +10,15 @@ from functools import partial
 from datetime import date
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QDialog,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QMenu,
     QMessageBox,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -52,9 +47,8 @@ from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialo
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import ElidedLabel, button, card, label
+from journal.ui.widgets import CardListView, EntityCard, button, confirm, empty_state, error_label, label, segment_button
 
-COLUMNS = 3  # кількість карток у рядку
 PANEL_WIDTH = 340  # початкова ширина панелі уроків
 PANEL_MIN_WIDTH = 260
 BANNER_MS = 5000  # скільки видно повідомлення про помилку
@@ -66,38 +60,16 @@ ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 default_api_factory: ApiFactory = partial(service_scope, JournalService)
 
 
-class _JournalCard(QFrame):
+class _JournalCard(EntityCard):
     """Клікабельна картка журналу."""
 
-    clicked = Signal()
-
     def __init__(self, info: JournalInfo) -> None:
-        super().__init__()
-        self.setObjectName("ClassCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(110)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(4)
-        top = QHBoxLayout()
-        title = ElidedLabel(f"{info.class_name} · {info.subject_name}")
-        title.setObjectName("CardBig")
-        top.addWidget(title, 1)
-        if info.class_archived:
-            top.addWidget(label("Архів", object_name="Badge"), alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(top)
-        layout.addWidget(label(info.school_year, muted=True))
-        layout.addStretch(1)
-        layout.addWidget(label(f"{info.lesson_count} {plural(info.lesson_count, 'урок', 'уроки', 'уроків')}"))
-        for child in self.findChildren(QLabel):
-            if isinstance(child, ElidedLabel):
-                continue  # підказка потрібна самій мітці
-            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
+        super().__init__(
+            f"{info.class_name} · {info.subject_name}",
+            info.school_year,
+            f"{info.lesson_count} {plural(info.lesson_count, 'урок', 'уроки', 'уроків')}",
+            info.class_archived,
+        )
 
 
 class JournalsPage(QWidget):
@@ -163,73 +135,34 @@ class JournalsPage(QWidget):
         self._banner_timer.start(BANNER_MS)
 
     def _confirm(self, text: str, accept_text: str) -> bool:
-        """Підтвердження дії; кнопка за замовчуванням — «Скасувати»."""
-        box = QMessageBox(QMessageBox.Icon.Question, "Підтвердження", text, parent=self)
-        accept = box.addButton(accept_text, QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton("Скасувати", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.setEscapeButton(cancel)
-        box.exec()
-        return box.clickedButton() is accept
+        return confirm(self, text, accept_text)
 
     # ------------------------------------------------------------------
     # Список журналів
     # ------------------------------------------------------------------
 
     def _build_list_view(self) -> QWidget:
-        view = QWidget()
-        layout = QVBoxLayout(view)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addWidget(label("Журнали", object_name="PageTitle"))
-        layout.addWidget(label("Журнал — це клас і предмет. Оберіть, щоб відкрити таблицю оцінок.", muted=True))
-        layout.addSpacing(16)
-
-        header = QHBoxLayout()
-        header.setSpacing(16)
-        header.addStretch(1)
-        self.archived_check = QCheckBox("Показати архівні")
-        self.archived_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.archived_check.toggled.connect(lambda _: self.show_list())
-        header.addWidget(self.archived_check)
-        self.new_journal_btn = button("Новий журнал", variant="primary")
-        self.new_journal_btn.clicked.connect(self._on_new_journal)
-        self._icon_refreshers.append(
-            lambda: self.new_journal_btn.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
+        empty = empty_state(
+            "Ще немає жодного журналу",
+            "Створіть журнал для свого класу й предмета.",
+            ("Новий журнал", self._on_new_journal),
+            vertical_padding=48,
         )
-        header.addWidget(self.new_journal_btn)
-        layout.addLayout(header)
-        layout.addSpacing(8)
-
-        self.list_stack = QStackedWidget()
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.viewport().setAutoFillBackground(False)
-        self.list_stack.addWidget(self.scroll)                    # 0 — картки
-        self.list_stack.addWidget(self._build_empty_journals())   # 1 — порожньо
-        layout.addWidget(self.list_stack, 1)
+        view = CardListView(
+            "Журнали",
+            "Журнал — це клас і предмет. Оберіть, щоб відкрити таблицю оцінок.",
+            "Новий журнал",
+            self._on_new_journal,
+            self.show_list,
+            empty,
+        )
+        self.list_view = view
+        self.archived_check, self.list_stack, self.scroll = view.archived_check, view.list_stack, view.scroll
+        self.new_journal_btn = view.new_button
+        self._icon_refreshers.append(
+            lambda: view.new_button.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
+        )
         return view
-
-    def _build_empty_journals(self) -> QWidget:
-        holder = QWidget()
-        holder_layout = QVBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 0, 0, 0)
-        frame, layout = card()
-        layout.setContentsMargins(40, 48, 40, 48)
-        heading = label("Ще немає жодного журналу", object_name="EmptyTitle")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(heading)
-        hint = label("Створіть журнал для свого класу й предмета.", muted=True)
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint)
-        action = button("Новий журнал", variant="primary")
-        action.clicked.connect(self._on_new_journal)
-        layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignHCenter)
-        holder_layout.addWidget(frame)
-        holder_layout.addStretch(1)
-        return holder
 
     def show_list(self) -> None:
         """Перемикає на список і заново будує картки."""
@@ -237,22 +170,10 @@ class JournalsPage(QWidget):
         self._journal_id = None
         ok, journals = self._call(lambda api: api.list_journals(self.teacher_id, self.archived_check.isChecked()))
         journals = journals if ok else []
-        if not journals:
-            self.list_stack.setCurrentIndex(1)
-        else:
-            host = QWidget()
-            grid = QGridLayout(host)
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setSpacing(16)
-            for column in range(COLUMNS):
-                grid.setColumnStretch(column, 1)
-            for index, info in enumerate(journals):
-                journal_card = _JournalCard(info)
-                journal_card.clicked.connect(lambda i=info: self.open_journal(i.id))
-                grid.addWidget(journal_card, index // COLUMNS, index % COLUMNS)
-            grid.setRowStretch(len(journals) // COLUMNS + 1, 1)
-            self.scroll.setWidget(host)
-            self.list_stack.setCurrentIndex(0)
+        cards = [_JournalCard(info) for info in journals]
+        for journal_card, info in zip(cards, journals):
+            journal_card.clicked.connect(lambda i=info: self.open_journal(i.id))
+        self.list_view.show_cards(cards)
         self.stack.setCurrentIndex(0)
 
     def _on_new_journal(self) -> None:
@@ -283,33 +204,36 @@ class JournalsPage(QWidget):
         layout.addWidget(self.title_label)
         layout.addWidget(self.subtitle_label)
         layout.addSpacing(12)
+        layout.addLayout(self._build_toolbar())
 
-        # Панель: перемикач семестрів, «Новий урок», меню
+        # Рядок помилки (ховається за 5 с)
+        self.banner = error_label()
+        self._banner_timer = QTimer(self)
+        self._banner_timer.setSingleShot(True)
+        self._banner_timer.timeout.connect(self.banner.hide)
+        layout.addWidget(self.banner)
+        layout.addSpacing(4)
+
+        layout.addWidget(self._build_grid_area(), 1)
+        self._build_shortcuts(view)
+        return view
+
+    def _build_toolbar(self) -> QHBoxLayout:
+        """Перемикач семестрів, «Теми уроків», «Новий урок», експорт і меню «Ще»."""
         bar = QHBoxLayout()
         bar.setSpacing(8)
         self.semester_buttons: dict[int, Any] = {}
         group = QButtonGroup(self)
         group.setExclusive(True)
         for number, text in ((1, "I семестр"), (2, "II семестр")):
-            seg = button(text)
-            seg.setProperty("segment", True)
-            seg.setCheckable(True)
-            # Вибрана кнопка має жирний шрифт і стає ширшою — резервуємо місце, щоб текст не обрізався.
-            bold = seg.font()
-            bold.setBold(True)
-            seg.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(text) + 56)
+            seg = segment_button(text)
             group.addButton(seg, number)
             bar.addWidget(seg)
             self.semester_buttons[number] = seg
         group.idClicked.connect(self._on_semester_clicked)
         bar.addStretch(1)
-        self.topics_btn = button("Теми уроків")
-        self.topics_btn.setProperty("segment", True)
-        self.topics_btn.setCheckable(True)
+        self.topics_btn = segment_button("Теми уроків")
         self.topics_btn.setChecked(True)
-        bold = self.topics_btn.font()
-        bold.setBold(True)
-        self.topics_btn.setMinimumWidth(QFontMetrics(bold).horizontalAdvance("Теми уроків") + 56)
         self.topics_btn.toggled.connect(lambda shown: self.lesson_panel.setVisible(shown))
         bar.addWidget(self.topics_btn)
         self.new_lesson_btn = button("Новий урок", variant="primary")
@@ -331,20 +255,10 @@ class JournalsPage(QWidget):
         menu.setToolTipsVisible(True)
         self.menu_btn.setMenu(menu)
         bar.addWidget(self.menu_btn)
-        layout.addLayout(bar)
+        return bar
 
-        # Рядок помилки (ховається за 5 с)
-        self.banner = QLabel()
-        self.banner.setProperty("error", True)
-        self.banner.setWordWrap(True)
-        self.banner.hide()
-        self._banner_timer = QTimer(self)
-        self._banner_timer.setSingleShot(True)
-        self._banner_timer.timeout.connect(self.banner.hide)
-        layout.addWidget(self.banner)
-        layout.addSpacing(4)
-
-        # Таблиця або порожній стан
+    def _build_grid_area(self) -> QStackedWidget:
+        """Таблиця з панеллю уроків (0) або порожній стан (1)."""
         self.content_stack = QStackedWidget()
         self.grid_view = JournalGridView()
         self.grid_view.saver = self._save_cell
@@ -369,10 +283,15 @@ class JournalsPage(QWidget):
         self.splitter.setStretchFactor(1, 0)
         self.lesson_panel.setMinimumWidth(PANEL_MIN_WIDTH)
         self.splitter.setSizes([10000, PANEL_WIDTH])
-        self.content_stack.addWidget(self.splitter)             # 0
-        self.content_stack.addWidget(self._build_empty_grid())  # 1
-        layout.addWidget(self.content_stack, 1)
+        self.content_stack.addWidget(self.splitter)  # 0
 
+        empty = empty_state("", "Додайте учнів на сторінці «Класи».", ("Новий урок", self._on_new_lesson))
+        self.empty_label, self.empty_hint, self.empty_lesson_btn = empty.title_label, empty.hint_label, empty.action
+        self.empty_hint.hide()
+        self.content_stack.addWidget(empty)  # 1
+        return self.content_stack
+
+    def _build_shortcuts(self, view: QWidget) -> None:
         shortcut = QShortcut(QKeySequence("Ctrl+N"), view)
         shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         shortcut.activated.connect(self.new_lesson_today)
@@ -382,27 +301,6 @@ class JournalsPage(QWidget):
             column_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             column_shortcut.activated.connect(lambda k=kind: self.add_column(k))
             setattr(self, f"{kind}_shortcut", column_shortcut)
-        return view
-
-    def _build_empty_grid(self) -> QWidget:
-        holder = QWidget()
-        holder_layout = QVBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 0, 0, 0)
-        frame, layout = card()
-        layout.setContentsMargins(40, 40, 40, 40)
-        self.empty_label = label("", object_name="EmptyTitle")
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.empty_label)
-        self.empty_hint = label("Додайте учнів на сторінці «Класи».", muted=True)
-        self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_hint.hide()
-        layout.addWidget(self.empty_hint)
-        self.empty_lesson_btn = button("Новий урок", variant="primary")
-        self.empty_lesson_btn.clicked.connect(self._on_new_lesson)
-        layout.addWidget(self.empty_lesson_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        holder_layout.addWidget(frame)
-        holder_layout.addStretch(1)
-        return holder
 
     def open_journal(self, journal_id: int) -> None:
         """Відкриває журнал на семестрі за сьогоднішньою датою і межами журналу (канікули — 1 семестр)."""

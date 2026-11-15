@@ -8,20 +8,15 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QDialog,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QMenu,
     QMessageBox,
-    QScrollArea,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -35,11 +30,9 @@ from journal.services.grid_text import plural
 from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
-from journal.ui.journal_dialogs import conflict_text
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import ElidedLabel, button, card, label
+from journal.ui.widgets import CardListView, EntityCard, button, confirm, conflict_text, empty_state, label
 
-COLUMNS = 3  # кількість карток у рядку
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
 
 
@@ -47,42 +40,11 @@ def _students_text(n: int) -> str:
     return f"{n} {plural(n, 'учень', 'учні', 'учнів')}"
 
 
-class _ClassCard(QFrame):
+class _ClassCard(EntityCard):
     """Клікабельна картка класу."""
 
-    clicked = Signal()
-
     def __init__(self, info: ClassInfo) -> None:
-        super().__init__()
-        self.setObjectName("ClassCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(110)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(4)
-
-        top = QHBoxLayout()
-        title = ElidedLabel(info.name)
-        title.setObjectName("CardBig")
-        top.addWidget(title, 1)
-        if info.archived:
-            top.addWidget(label("Архів", object_name="Badge"), alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(top)
-        layout.addWidget(label(info.school_year, muted=True))
-        layout.addStretch(1)
-        layout.addWidget(label(_students_text(info.student_count)))
-
-        # Дочірні мітки пропускають події миші до картки: hover і клік працюють на всій площі.
-        for child in self.findChildren(QLabel):
-            if isinstance(child, ElidedLabel):
-                continue  # підказка потрібна самій мітці
-            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
+        super().__init__(info.name, info.school_year, _students_text(info.student_count), info.archived)
 
 
 class ClassesPage(QWidget):
@@ -134,92 +96,31 @@ class ClassesPage(QWidget):
         return True, result
 
     def _confirm(self, text: str, accept_text: str) -> bool:
-        """Підтвердження дії; кнопка за замовчуванням — «Скасувати»."""
-        box = QMessageBox(QMessageBox.Icon.Question, "Підтвердження", text, parent=self)
-        accept = box.addButton(accept_text, QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton("Скасувати", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.setEscapeButton(cancel)
-        box.exec()
-        return box.clickedButton() is accept
+        return confirm(self, text, accept_text)
 
     # ------------------------------------------------------------------
     # Список класів
     # ------------------------------------------------------------------
 
     def _build_list_view(self) -> QWidget:
-        view = QWidget()
-        layout = QVBoxLayout(view)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addWidget(label("Класи", object_name="PageTitle"))
-        layout.addWidget(label("Списки учнів, для яких ви ведете журнали.", muted=True))
-        layout.addSpacing(16)
-
-        # Рядок керування: «Показати архівні» і «Новий клас» праворуч
-        header = QHBoxLayout()
-        header.setSpacing(16)
-        header.addStretch(1)
-        self.archived_check = QCheckBox("Показати архівні")
-        self.archived_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.archived_check.toggled.connect(lambda _: self.show_list())
-        header.addWidget(self.archived_check)
-        new_button = button("Новий клас", variant="primary")
-        new_button.clicked.connect(self._on_new_class)
-        self._icon_refreshers.append(
-            lambda: new_button.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
+        empty = empty_state(
+            "Ще немає жодного класу",
+            "Створіть клас і додайте до нього список учнів.",
+            ("Новий клас", self._on_new_class),
+            icon="users",
+            action_icon="plus",
+            vertical_padding=48,
         )
-        header.addWidget(new_button)
-        layout.addLayout(header)
-        layout.addSpacing(8)
-
-        # Нижня частина: або сітка карток, або «порожній стан»
-        self.list_stack = QStackedWidget()
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.viewport().setAutoFillBackground(False)
-        self.list_stack.addWidget(self.scroll)                       # 0 — картки
-        self.list_stack.addWidget(self._build_empty_classes())       # 1 — порожньо
-        layout.addWidget(self.list_stack, 1)
+        view = CardListView(
+            "Класи", "Списки учнів, для яких ви ведете журнали.", "Новий клас", self._on_new_class, self.show_list, empty
+        )
+        self.list_view = view
+        self.archived_check, self.list_stack, self.scroll = view.archived_check, view.list_stack, view.scroll
+        self._icon_refreshers.append(empty.refresh_icons)
+        self._icon_refreshers.append(
+            lambda: view.new_button.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
+        )
         return view
-
-    def _build_empty_classes(self) -> QWidget:
-        """Стан «ще немає жодного класу» — картка з іконкою та кнопкою дії."""
-        holder = QWidget()
-        holder_layout = QVBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 0, 0, 0)
-        frame, layout = card()
-        layout.setContentsMargins(40, 48, 40, 48)
-
-        badge = QLabel()
-        badge.setObjectName("Avatar")  # м'який індиго-кружок, як в інших порожніх станах
-        badge.setFixedSize(56, 56)
-        badge.setStyleSheet("border-radius: 28px;")
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._icon_refreshers.append(
-            lambda: badge.setPixmap(icons.pixmap("users", theme.color("accent"), size=26))
-        )
-        layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(6)
-        heading = label("Ще немає жодного класу", object_name="EmptyTitle")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(heading)
-        hint = label("Створіть клас і додайте до нього список учнів.", muted=True)
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(10)
-        action = button("Новий клас", variant="primary")
-        action.clicked.connect(self._on_new_class)
-        self._icon_refreshers.append(
-            lambda: action.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
-        )
-        layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        holder_layout.addWidget(frame)
-        holder_layout.addStretch(1)
-        return holder
 
     def refresh(self) -> None:
         """Оновлює сторінку ззовні (напр., після переходу на новий навчальний рік)."""
@@ -232,22 +133,10 @@ class ClassesPage(QWidget):
         ok, classes = self._call(lambda s: s.list_classes(self.teacher_id, include_archived))
         if not ok:
             classes = []
-        if not classes:
-            self.list_stack.setCurrentIndex(1)
-        else:
-            grid_host = QWidget()
-            grid = QGridLayout(grid_host)
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setSpacing(16)
-            for column in range(COLUMNS):
-                grid.setColumnStretch(column, 1)
-            for index, info in enumerate(classes):
-                class_card = _ClassCard(info)
-                class_card.clicked.connect(lambda i=info: self.open_class(i.id))
-                grid.addWidget(class_card, index // COLUMNS, index % COLUMNS)
-            grid.setRowStretch(len(classes) // COLUMNS + 1, 1)  # притискає картки догори
-            self.scroll.setWidget(grid_host)
-            self.list_stack.setCurrentIndex(0)
+        cards = [_ClassCard(info) for info in classes]
+        for class_card, info in zip(cards, classes):
+            class_card.clicked.connect(lambda i=info: self.open_class(i.id))
+        self.list_view.show_cards(cards)
         self.stack.setCurrentIndex(0)
 
     def _on_new_class(self) -> None:
@@ -360,20 +249,9 @@ class ClassesPage(QWidget):
         return holder
 
     def _build_empty_students(self) -> QWidget:
-        holder = QWidget()
-        holder_layout = QVBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 0, 0, 0)
-        frame, layout = card()
-        layout.setContentsMargins(40, 40, 40, 40)
-        heading = label("У класі ще немає учнів", object_name="EmptyTitle")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(heading)
-        self.empty_import_btn = button("Додати списком", variant="primary")
-        self.empty_import_btn.clicked.connect(self._on_import)
-        layout.addWidget(self.empty_import_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        holder_layout.addWidget(frame)
-        holder_layout.addStretch(1)
-        return holder
+        empty = empty_state("У класі ще немає учнів", action=("Додати списком", self._on_import))
+        self.empty_import_btn = empty.action
+        return empty
 
     def open_class(self, class_id: int) -> None:
         """Відкриває детальний вигляд класу."""

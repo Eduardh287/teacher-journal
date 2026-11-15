@@ -1,5 +1,4 @@
 """Діалоги сторінки «Журнали»: новий журнал, урок, коментар, підтвердження видалення уроку й журналу."""
-import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import date
@@ -11,12 +10,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QCalendarWidget,
     QDateEdit,
-    QDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPlainTextEdit,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -38,55 +34,32 @@ from journal.services.journal_types import (
     LessonTypeCode,
     SemesterConflict,
 )
-from journal.services.semesters import MONTHS_UA, SemesterBoundaries, SemesterError
+from journal.services.semesters import SemesterBoundaries, SemesterError
 from journal.ui import theme
-from journal.ui.widgets import button, field, label
+from journal.ui.widgets import FormDialog, SemesterBoundsEditor, button, conflict_text, field, label
 
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
-SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
 DELETE_WORD = "видалити"
 DATELESS_HINT = "Для «Тематичної» і «Зошита» дата, тема й д/з не вказуються"
 NO_LESSONS_TEXT = "Спершу створіть урок у цьому семестрі"
 
-class _ApiDialog(QDialog):
+class _ApiDialog(FormDialog):
     """Основа: заголовок, рядок помилки й безпечний виклик сервісу журналів."""
 
     def __init__(self, title: str, teacher_id: int, api_factory: ApiFactory, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(440)
+        super().__init__(title, parent)
         self.teacher_id = teacher_id
         self.api_factory = api_factory
 
-        self.error_label = QLabel()
-        self.error_label.setProperty("error", True)
-        self.error_label.setWordWrap(True)
-        self.error_label.hide()
-
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(32, 28, 32, 28)
-        self.body.setSpacing(14)
-        self.body.addWidget(label(title, object_name="EmptyTitle"))
-
-    def show_error(self, text: str) -> None:
-        self.error_label.setText(text)
-        self.error_label.show()
-
     def run_service(self, action: Callable[[JournalApi], Any]) -> tuple[bool, Any]:
-        """Виконує action в одній транзакції; JournalError ловимо поза блоком with (відкат)."""
-        self.error_label.hide()
-        try:
+        """Виконує action в одній транзакції. Повертає (успіх, результат)."""
+
+        def call():
             with self.api_factory() as api:
-                result = action(api)
-        except JournalError as error:
-            self.show_error(str(error))
-            return False, None
-        except Exception:
-            logging.exception("Помилка під час роботи з журналами")
-            self.show_error(SAVE_ERROR_TEXT)
-            return False, None
-        return True, result
+                return action(api)
+
+        return self.run(call, JournalError, "Помилка під час роботи з журналами")
 
 
 class NewJournalDialog(_ApiDialog):
@@ -105,10 +78,6 @@ class NewJournalDialog(_ApiDialog):
             muted=True,
             wrap=True,
         )
-        self.submit_button = button("Створити", variant="primary")
-        self.submit_button.setMinimumHeight(40)
-        self.submit_button.setDefault(True)
-        self.submit_button.clicked.connect(self._on_submit)
 
         if self.candidates:
             seen: set[int] = set()
@@ -121,10 +90,11 @@ class NewJournalDialog(_ApiDialog):
             self.body.addWidget(field("КЛАС", self.class_combo))
             self.body.addWidget(field("ПРЕДМЕТ", self.subject_combo))
             self.body.addWidget(self.error_label)
-            self.body.addWidget(self.submit_button)
+            self.submit_button = self.add_submit("Створити", self._on_submit)
         else:
             self.body.addWidget(self.hint_label)
             self.body.addWidget(self.error_label)
+            self.submit_button = button("Створити", variant="primary")  # у вікно не додається
             self.submit_button.setEnabled(False)
             close_button = button("Закрити")
             close_button.clicked.connect(self.reject)
@@ -217,11 +187,7 @@ class LessonDialog(_ApiDialog):
         self.dateless_hint.hide()
         self.body.addWidget(self.dateless_hint)
         self.body.addWidget(self.error_label)
-        submit = button("Зберегти" if lesson else "Створити", variant="primary")
-        submit.setDefault(True)
-        submit.setMinimumHeight(40)
-        submit.clicked.connect(self._on_submit)
-        self.body.addWidget(submit)
+        self.add_submit("Зберегти" if lesson else "Створити", self._on_submit)
         if focus_topic:  # подвійний клік по темі в панелі уроків: одразу правимо тему
             self.topic_edit.setFocus()
             self.topic_edit.selectAll()
@@ -295,17 +261,12 @@ class LessonDialog(_ApiDialog):
             self.accept()
 
 
-class CommentDialog(QDialog):
+class CommentDialog(FormDialog):
     """Багаторядковий коментар до клітинки (до 500 символів)."""
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Коментар")
-        self.setMinimumWidth(440)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(14)
-        layout.addWidget(label("Коментар до клітинки", object_name="EmptyTitle"))
+        super().__init__("Коментар", parent, heading="Коментар до клітинки")
+        layout = self.body
         self.edit = QPlainTextEdit()
         self.edit.setMinimumHeight(140)
         self.edit.setTabChangesFocus(True)
@@ -335,7 +296,7 @@ class CommentDialog(QDialog):
         return self.edit.toPlainText().strip()
 
 
-class _TypedConfirmDialog(QDialog):
+class _TypedConfirmDialog(FormDialog):
     """Підтвердження словом: кнопка «Видалити» активується лише після введення «видалити»."""
 
     def __init__(
@@ -348,14 +309,9 @@ class _TypedConfirmDialog(QDialog):
         word: str = DELETE_WORD,
         confirm_text: str = "Видалити",
     ) -> None:
-        super().__init__(parent)
+        super().__init__(window_title, parent, heading=heading)
         self._word = word
-        self.setWindowTitle(window_title)
-        self.setMinimumWidth(440)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(14)
-        layout.addWidget(label(heading, object_name="EmptyTitle"))
+        layout = self.body
         layout.addWidget(label(f"{text} Щоб підтвердити, введіть «{word}».", wrap=True))
         self.confirm_edit = QLineEdit()
         self.confirm_edit.setPlaceholderText(word)
@@ -392,18 +348,7 @@ class DeleteJournalDialog(_TypedConfirmDialog):
         )
 
 
-CONFLICT_LIMIT = 10
 SETTINGS_ONLY_TEXT = "Змінюється в Налаштуваннях"
-
-
-def conflict_text(conflicts: list) -> str:
-    """«Зміну не збережено…» і перелік уроків «9-А · Алгебра — 15.01.2027» (перші 10, далі «і ще N»)."""
-    lines = [
-        f"{c.class_name} · {c.subject_name} — {c.lesson_date:%d.%m.%Y}" for c in conflicts[:CONFLICT_LIMIT]
-    ]
-    if len(conflicts) > CONFLICT_LIMIT:
-        lines.append(f"і ще {len(conflicts) - CONFLICT_LIMIT}")
-    return "Зміну не збережено: ці уроки потрапляють у канікули.\n" + "\n".join(lines)
 
 
 class JournalSettingsDialog(_ApiDialog):
@@ -414,22 +359,11 @@ class JournalSettingsDialog(_ApiDialog):
         self.info = info
         self.result_info: JournalInfo | None = None
         self.editable = info.class_archived
-        b = info.boundaries
 
         self.body.addWidget(label(f"{info.class_name} · {info.subject_name} · {info.school_year}", muted=True))
-        self.combos: dict[str, QComboBox] = {}
-        for caption, start_key, end_key, start, end in (
-            ("I семестр", "s1_start", "s1_end", b.s1_start, b.s1_end),
-            ("II семестр", "s2_start", "s2_end", b.s2_start, b.s2_end),
-        ):
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            row.addWidget(label(f"{caption}: з"))
-            row.addWidget(self._month_combo(start_key, start))
-            row.addWidget(label("по"))
-            row.addWidget(self._month_combo(end_key, end))
-            row.addStretch(1)
-            self.body.addLayout(row)
+        self.editor = SemesterBoundsEditor(info.boundaries, spacing=14)
+        self.combos = self.editor.combos
+        self.body.addWidget(self.editor)
         self.body.addWidget(label("Інші місяці — канікули", muted=True))
 
         self.note_label = label(SETTINGS_ONLY_TEXT, muted=True, wrap=True)
@@ -440,32 +374,20 @@ class JournalSettingsDialog(_ApiDialog):
         if self.editable:
             self.note_label.hide()
         else:
-            for combo in self.combos.values():
-                combo.setEnabled(False)
+            self.editor.setEnabled(False)
             self.save_button.hide()
         self.body.addWidget(self.note_label)
         self.body.addWidget(self.error_label)
         self.body.addWidget(self.save_button)
 
-    def _month_combo(self, key: str, month: int) -> QComboBox:
-        combo = QComboBox()
-        for number, name in enumerate(MONTHS_UA, start=1):
-            combo.addItem(name, number)
-        combo.setCurrentIndex(month - 1)
-        self.combos[key] = combo
-        return combo
-
     def selected_boundaries(self) -> SemesterBoundaries:
-        c = self.combos
-        return SemesterBoundaries(
-            c["s1_start"].currentData(), c["s1_end"].currentData(),
-            c["s2_start"].currentData(), c["s2_end"].currentData(),
-        )
+        return self.editor.boundaries()
 
-    def _revert(self) -> None:
-        b = self.info.boundaries
-        for key, month in (("s1_start", b.s1_start), ("s1_end", b.s1_end), ("s2_start", b.s2_start), ("s2_end", b.s2_end)):
-            self.combos[key].setCurrentIndex(month - 1)
+    def error_text(self, error: Exception) -> str:
+        if isinstance(error, SemesterConflict):  # показуємо уроки й повертаємо попередні межі
+            self.editor.set_boundaries(self.info.boundaries)
+            return conflict_text(error.conflicts)
+        return str(error)
 
     def _on_save(self) -> None:
         if not self.editable:
@@ -477,20 +399,7 @@ class JournalSettingsDialog(_ApiDialog):
             self.show_error(str(error))
             return
         journal_id = self.info.id
-        self.error_label.hide()
-        try:
-            with self.api_factory() as api:
-                info = api.set_journal_semesters(self.teacher_id, journal_id, boundaries)
-        except SemesterConflict as conflict:
-            self.show_error(conflict_text(conflict.conflicts))
-            self._revert()
-            return
-        except JournalError as error:
-            self.show_error(str(error))
-            return
-        except Exception:
-            logging.exception("Помилка під час зміни меж семестрів журналу")
-            self.show_error(SAVE_ERROR_TEXT)
-            return
-        self.result_info = info
-        self.accept()
+        ok, info = self.run_service(lambda api: api.set_journal_semesters(self.teacher_id, journal_id, boundaries))
+        if ok:
+            self.result_info = info
+            self.accept()

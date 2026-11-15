@@ -82,6 +82,21 @@ TOKENS: dict[str, dict[str, str]] = {
     },
 }
 
+# Тло заголовка та рядка за типом уроку (звичайний урок — без тла) і за видом стовпця без дати; значення — назви токенів.
+LESSON_TINT = {
+    "test": "lesson_test_soft",
+    "lab": "lesson_lab_soft",
+    "independent": "lesson_independent_soft",
+    "quiz": "lesson_quiz_soft",
+    "project": "lesson_project_soft",
+}
+COLUMN_TINT = {
+    "thematic": "col_thematic_soft",
+    "notebook": "col_notebook_soft",
+    "semester": "col_final_soft",
+    "annual": "col_final_soft",
+}
+
 STYLESHEET = Template(
     r"""
 QWidget { font-family: "Segoe UI Variable Text", "Segoe UI"; font-size: 10pt; color: $text; }

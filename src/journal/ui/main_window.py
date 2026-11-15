@@ -24,7 +24,7 @@ from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
 from journal.ui.journals_page import JournalsPage
 from journal.ui.settings_cards import AccountCard, BackupsCard, SemestersCard, SubjectsCard
-from journal.ui.widgets import brand_mark, button, card, label
+from journal.ui.widgets import brand_mark, button, card, label, segment_button
 
 # (іконка, підпис у меню)
 NAV_ITEMS = [("users", "Класи"), ("book", "Журнали"), ("settings", "Налаштування")]
@@ -199,9 +199,7 @@ class MainWindow(QMainWindow):
         row.setSpacing(8)
         active = theme.current_theme()
         for name, title, icon_name in THEME_CHOICES:
-            btn = button(title)
-            btn.setProperty("segment", True)
-            btn.setCheckable(True)
+            btn = segment_button(title, reserve_bold=False)
             btn.setChecked(name == active)
             btn.setProperty("themeName", name)
             self._icon_refreshers.append(

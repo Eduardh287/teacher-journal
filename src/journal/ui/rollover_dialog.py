@@ -10,12 +10,12 @@ from functools import partial
 from datetime import date
 from typing import Any, Protocol
 
-from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QMessageBox, QWidget
 
 from journal.services.grid_text import plural
 from journal.services.rollover_service import RolloverItem, RolloverService
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import button, label
+from journal.ui.widgets import FormDialog, button, label
 
 ERROR_TEXT = "Не вдалося виконати перехід на новий навчальний рік. Спробуйте пізніше."
 COPY_TEXT = "Створити такі самі журнали для нових класів"
@@ -46,18 +46,13 @@ def item_text(item: RolloverItem) -> str:
     return f"{item.class_name} → архів"
 
 
-class RolloverDialog(QDialog):
+class RolloverDialog(FormDialog):
     """«Навчальний рік завершено»: перелік змін, галочка про журнали, «Гаразд» / «Пізніше»."""
 
     def __init__(self, items: list[RolloverItem], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+        super().__init__("Навчальний рік завершено", parent, width=480)
         self.items = items
-        self.setWindowTitle("Навчальний рік завершено")
-        self.setMinimumWidth(480)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(14)
-        layout.addWidget(label("Навчальний рік завершено", object_name="EmptyTitle"))
+        layout = self.body
         layout.addWidget(label("Пропонується перейти на новий навчальний рік:", muted=True, wrap=True))
         self.lines = [label(item_text(item), wrap=True) for item in items]
         for line in self.lines:

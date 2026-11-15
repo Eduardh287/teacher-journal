@@ -10,22 +10,14 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QVBoxLayout,
+    QWidget,
 )
 
 from journal.services.journal_types import JournalError, SemesterConflict
-from journal.services.semesters import (
-    DEFAULT_BOUNDARIES,
-    MONTHS_UA,
-    SemesterBoundaries,
-    SemesterError,
-)
+from journal.services.semesters import DEFAULT_BOUNDARIES, SemesterBoundaries, SemesterError
 from journal.services.settings_service import SettingsService
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError, SubjectService
 from journal.services.auth_service import AuthError
@@ -33,40 +25,12 @@ from journal.logging_setup import log_failure
 from journal.ui import auth_dialogs, backup_dialogs
 from journal.ui.service_scope import service_scope
 from journal.ui.theme import app_settings
-from journal.ui.widgets import ElidedLabel, button, label
+from journal.ui.widgets import ElidedLabel, SemesterBoundsEditor, SettingsCard, button, conflict_text, label
 
-MAX_CONFLICTS_SHOWN = 10
 GENERIC_ERROR = "Не вдалося зберегти зміни"
 
 
-def _error_label() -> QLabel:
-    widget = QLabel()
-    widget.setProperty("error", True)
-    widget.setWordWrap(True)
-    widget.hide()
-    return widget
-
-
-def _month_combo() -> QComboBox:
-    combo = QComboBox()
-    for number, name in enumerate(MONTHS_UA, start=1):
-        combo.addItem(name, number)
-    return combo
-
-
-def format_conflicts(conflicts) -> str:
-    """«9-А · Алгебра — 15.01.2027», не більше 10 рядків, далі «і ще N»."""
-    lines = [
-        f"{c.class_name} · {c.subject_name} — {c.lesson_date:%d.%m.%Y}"
-        for c in conflicts[:MAX_CONFLICTS_SHOWN]
-    ]
-    rest = len(conflicts) - MAX_CONFLICTS_SHOWN
-    if rest > 0:
-        lines.append(f"і ще {rest}")
-    return "\n".join(lines)
-
-
-class SemestersCard(QFrame):
+class SemestersCard(SettingsCard):
     """Межі семестрів по місяцях; зберігаються одразу для всіх журналів у роботі."""
 
     def __init__(
@@ -75,73 +39,29 @@ class SemestersCard(QFrame):
         service_factory: Callable[[], AbstractContextManager] | None = None,
         on_saved: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__("Семестри", "Межі семестрів задаються місяцями. Інші місяці — канікули.")
         self.teacher_id = teacher_id
         self._factory = service_factory or partial(service_scope, SettingsService)
         self._on_saved = on_saved
         self._loaded = DEFAULT_BOUNDARIES
 
-        self.setObjectName("Card")
-        self._build()
-        self.load()
-
-    def _build(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addWidget(label("Семестри", object_name="CardTitle"))
-        layout.addWidget(label("Межі семестрів задаються місяцями. Інші місяці — канікули.", muted=True))
-
-        self.s1_start, self.s1_end = _month_combo(), _month_combo()
-        self.s2_start, self.s2_end = _month_combo(), _month_combo()
-        layout.addLayout(self._row("I семестр:", self.s1_start, self.s1_end))
-        layout.addLayout(self._row("II семестр:", self.s2_start, self.s2_end))
+        self.editor = SemesterBoundsEditor(caption_width=72)
+        self.s1_start, self.s1_end, self.s2_start, self.s2_end = (
+            self.editor.combos[key] for key in SemesterBoundsEditor.KEYS
+        )
+        self.body.addWidget(self.editor)
 
         actions = QHBoxLayout()
         self.save_button = button("Зберегти", variant="primary")
         self.save_button.clicked.connect(self._on_save)
         actions.addWidget(self.save_button)
         actions.addStretch(1)
-        layout.addLayout(actions)
-
-        self.status = label("", muted=True, wrap=True)
-        self.status.hide()
-        layout.addWidget(self.status)
-        self.error = _error_label()
-        layout.addWidget(self.error)
-
-    @staticmethod
-    def _row(title: str, start: QComboBox, end: QComboBox) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        caption = label(title)
-        caption.setMinimumWidth(72)
-        row.addWidget(caption)
-        row.addWidget(label("з"))
-        row.addWidget(start)
-        row.addWidget(label("по"))
-        row.addWidget(end)
-        row.addStretch(1)
-        return row
-
-    # ---------- Дані ----------
-
-    def _set_combos(self, b: SemesterBoundaries) -> None:
-        for combo, month in (
-            (self.s1_start, b.s1_start),
-            (self.s1_end, b.s1_end),
-            (self.s2_start, b.s2_start),
-            (self.s2_end, b.s2_end),
-        ):
-            combo.setCurrentIndex(combo.findData(month))
+        self.body.addLayout(actions)
+        self.add_feedback()
+        self.load()
 
     def boundaries(self) -> SemesterBoundaries:
-        return SemesterBoundaries(
-            self.s1_start.currentData(),
-            self.s1_end.currentData(),
-            self.s2_start.currentData(),
-            self.s2_end.currentData(),
-        )
+        return self.editor.boundaries()
 
     def load(self) -> None:
         try:
@@ -149,15 +69,10 @@ class SemestersCard(QFrame):
                 loaded = service.get_semesters(self.teacher_id)
         except Exception:
             logging.exception("Не вдалося завантажити межі семестрів")
-            self._show_error("Не вдалося завантажити налаштування семестрів")
+            self.show_error("Не вдалося завантажити налаштування семестрів")
             return
         self._loaded = loaded
-        self._set_combos(loaded)
-
-    def _show_error(self, text: str) -> None:
-        self.status.hide()
-        self.error.setText(text)
-        self.error.show()
+        self.editor.set_boundaries(loaded)
 
     def _on_save(self) -> None:
         chosen = self.boundaries()
@@ -165,28 +80,26 @@ class SemestersCard(QFrame):
             with self._factory() as service:
                 updated = service.set_semesters(self.teacher_id, chosen)
         except SemesterError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             return
         except SemesterConflict as error:
-            self._set_combos(self._loaded)
-            self._show_error(f"{error}:\n{format_conflicts(error.conflicts)}")
+            self.editor.set_boundaries(self._loaded)
+            self.show_error(conflict_text(error.conflicts, header=f"{error}:"))
             return
         except JournalError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             return
         except Exception:
             logging.exception("Не вдалося зберегти межі семестрів")
-            self._show_error(GENERIC_ERROR)
+            self.show_error(GENERIC_ERROR)
             return
         self._loaded = chosen
-        self.error.hide()
-        self.status.setText(f"Збережено. Оновлено журналів: {updated}")
-        self.status.show()
+        self.show_status(f"Збережено. Оновлено журналів: {updated}")
         if self._on_saved is not None:
             self._on_saved()
 
 
-class SubjectsCard(QFrame):
+class SubjectsCard(SettingsCard):
     """Список предметів і додавання власного (рішення автора)."""
 
     def __init__(
@@ -194,20 +107,12 @@ class SubjectsCard(QFrame):
         service_factory: Callable[[], AbstractContextManager] | None = None,
         on_changed: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__("Предмети", "Предмети, для яких можна створювати журнали. Додайте свій, якщо його немає.")
         self._factory = service_factory or partial(service_scope, SubjectService)
         self._on_changed = on_changed
 
-        self.setObjectName("Card")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addWidget(label("Предмети", object_name="CardTitle"))
-        layout.addWidget(
-            label("Предмети, для яких можна створювати журнали. Додайте свій, якщо його немає.", muted=True)
-        )
         self.subjects_label = label("", wrap=True)
-        layout.addWidget(self.subjects_label)
+        self.body.addWidget(self.subjects_label)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -219,10 +124,8 @@ class SubjectsCard(QFrame):
         add.clicked.connect(self._on_add)
         row.addWidget(self.subject_edit, 1)
         row.addWidget(add)
-        layout.addLayout(row)
-
-        self.subject_error = _error_label()
-        layout.addWidget(self.subject_error)
+        self.body.addLayout(row)
+        self.add_feedback()
         self.load()
 
     def load(self) -> None:
@@ -240,15 +143,13 @@ class SubjectsCard(QFrame):
             with self._factory() as service:
                 service.add_subject(self.subject_edit.text())
         except SubjectError as error:
-            self.subject_error.setText(str(error))
-            self.subject_error.show()
+            self.show_error(str(error))
             return
         except Exception:
             logging.exception("Не вдалося додати предмет")
-            self.subject_error.setText(GENERIC_ERROR)
-            self.subject_error.show()
+            self.show_error(GENERIC_ERROR)
             return
-        self.subject_error.hide()
+        self.error.hide()
         self.subject_edit.clear()
         self.load()
         if self._on_changed is not None:
@@ -286,7 +187,7 @@ def open_folder(path: Path) -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
-class BackupsCard(QFrame):
+class BackupsCard(SettingsCard):
     """Резервні копії: створити зараз, відкрити/змінити папку, відновити з копії."""
 
     def __init__(
@@ -296,32 +197,24 @@ class BackupsCard(QFrame):
         set_dir: Callable[[str | None], None] = save_backup_dir,
         on_restored: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(
+            "Резервні копії",
+            "Копія робиться автоматично при закритті програми. Можна зберігати її на флешці "
+            "або в папці, що синхронізується з хмарою.",
+            wrap_hint=True,
+        )
         self._factory = service_factory or _default_backup_service
         self._get_dir = get_dir
         self._set_dir = set_dir
         self._on_restored = on_restored or QApplication.quit
 
-        self.setObjectName("Card")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addWidget(label("Резервні копії", object_name="CardTitle"))
-        layout.addWidget(
-            label(
-                "Копія робиться автоматично при закритті програми. Можна зберігати її на флешці "
-                "або в папці, що синхронізується з хмарою.",
-                muted=True,
-                wrap=True,
-            )
-        )
         self.folder_label = ElidedLabel()
-        layout.addWidget(self.folder_label)
+        self.body.addWidget(self.folder_label)
         self.latest_label = label("", muted=True, wrap=True)
-        layout.addWidget(self.latest_label)
+        self.body.addWidget(self.latest_label)
         self.fallback_note = label(FALLBACK_NOTE, muted=True, wrap=True)
         self.fallback_note.hide()
-        layout.addWidget(self.fallback_note)
+        self.body.addWidget(self.fallback_note)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -336,29 +229,14 @@ class BackupsCard(QFrame):
         for widget in (self.create_button, self.open_button, self.change_button, self.restore_button):
             row.addWidget(widget)
         row.addStretch(1)
-        layout.addLayout(row)
-
-        self.status = label("", muted=True, wrap=True)
-        self.status.hide()
-        layout.addWidget(self.status)
-        self.error = _error_label()
-        layout.addWidget(self.error)
+        self.body.addLayout(row)
+        self.add_feedback()
         self.refresh()
 
     # ---------- допоміжне ----------
 
     def _service(self):
         return self._factory(self._get_dir())
-
-    def _show_status(self, text: str) -> None:
-        self.error.hide()
-        self.status.setText(text)
-        self.status.show()
-
-    def _show_error(self, text: str) -> None:
-        self.status.hide()
-        self.error.setText(text)
-        self.error.show()
 
     def refresh(self) -> None:
         try:
@@ -393,16 +271,16 @@ class BackupsCard(QFrame):
                 self, "Створюю резервну копію…", lambda: service.create_backup("manual")
             )
         except BackupError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             return
         except Exception:
             log_failure("Не вдалося створити резервну копію")
-            self._show_error("Не вдалося створити резервну копію. Деталі — у журналі.")
+            self.show_error("Не вдалося створити резервну копію. Деталі — у журналі.")
             return
         text = f"Копію створено: {path.name}"
         if getattr(service, "fallback_used", False):
             text += f"\n{backup_dialogs.FALLBACK_TEXT}"
-        self._show_status(text)
+        self.show_status(text)
         self.refresh()
 
     def _on_open(self) -> None:
@@ -410,7 +288,7 @@ class BackupsCard(QFrame):
             folder = Path(self._service().effective_dir(create=True))
         except Exception:
             log_failure("Не вдалося відкрити папку копій")
-            self._show_error("Не вдалося відкрити папку копій.")
+            self.show_error("Не вдалося відкрити папку копій.")
             return
         open_folder(folder)
 
@@ -420,7 +298,7 @@ class BackupsCard(QFrame):
         if not chosen:
             return
         self._set_dir(os.path.normpath(chosen))
-        self._show_status("Папку змінено. Нові копії зберігатимуться тут.")
+        self.show_status("Папку змінено. Нові копії зберігатимуться тут.")
         self.refresh()
 
     def _on_restore(self) -> None:
@@ -431,7 +309,7 @@ class BackupsCard(QFrame):
             start = str(service.effective_dir())
         except Exception:
             log_failure("Не вдалося підготувати відновлення")
-            self._show_error("Не вдалося підготувати відновлення. Деталі — у журналі.")
+            self.show_error("Не вдалося підготувати відновлення. Деталі — у журналі.")
             return
         chosen, _ = QFileDialog.getOpenFileName(
             self, "Відновити з копії", start, "Резервні копії (*.dump)"
@@ -441,27 +319,27 @@ class BackupsCard(QFrame):
         try:
             info = service.inspect(Path(chosen))
         except BackupError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             return
         except Exception:
             log_failure("Не вдалося перевірити файл копії")
-            self._show_error("Не вдалося прочитати файл копії. Деталі — у журналі.")
+            self.show_error("Не вдалося прочитати файл копії. Деталі — у журналі.")
             return
         if not backup_dialogs.confirm_restore(self, info):
             return
         try:
             backup_dialogs.run_busy(self, "Відновлюю дані…", lambda: service.restore(info.path))
         except RestoreFailed as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             backup_dialogs.show_warning(self, "Відновлення не вдалося", str(error))
             self.refresh()
             return
         except BackupError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             return
         except Exception:
             log_failure("Відновлення завершилось несподіваною помилкою")
-            self._show_error("Не вдалося відновити дані. Деталі — у журналі.")
+            self.show_error("Не вдалося відновити дані. Деталі — у журналі.")
             return
         backup_dialogs.show_info(
             self, "Дані відновлено", "Дані відновлено. Програма закриється — відкрийте її знову."
@@ -471,7 +349,7 @@ class BackupsCard(QFrame):
 
 # ---------------------------------------------------------------- обліковий запис (етап 7b)
 
-class AccountCard(QFrame):
+class AccountCard(SettingsCard):
     """Зміна пароля: поточний + новий + повтор. Після успіху показує новий код відновлення."""
 
     def __init__(
@@ -480,41 +358,28 @@ class AccountCard(QFrame):
         runner: Callable[[Callable], object] | None = None,
         show_code: Callable[[QWidget | None, str], None] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(
+            "Обліковий запис",
+            "Після зміни пароля програма покаже новий код відновлення. Старий код перестане діяти.",
+            wrap_hint=True,
+        )
         self.teacher_id = teacher_id
         self._runner = runner or auth_dialogs.run_auth_action
         self._show_code = show_code or auth_dialogs.show_recovery_code
 
-        self.setObjectName("Card")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addWidget(label("Обліковий запис", object_name="CardTitle"))
-        layout.addWidget(
-            label(
-                "Після зміни пароля програма покаже новий код відновлення. Старий код перестане діяти.",
-                muted=True,
-                wrap=True,
-            )
-        )
         self.current_edit = self._password_edit("Поточний пароль")
         self.new_edit = self._password_edit("Новий пароль (щонайменше 8 символів)")
         self.repeat_edit = self._password_edit("Новий пароль ще раз")
         for edit in (self.current_edit, self.new_edit, self.repeat_edit):
-            layout.addWidget(edit)
+            self.body.addWidget(edit)
 
         actions = QHBoxLayout()
         self.change_button = button("Змінити пароль", variant="primary")
         self.change_button.clicked.connect(self._on_change)
         actions.addWidget(self.change_button)
         actions.addStretch(1)
-        layout.addLayout(actions)
-
-        self.status = label("", muted=True, wrap=True)
-        self.status.hide()
-        layout.addWidget(self.status)
-        self.error = _error_label()
-        layout.addWidget(self.error)
+        self.body.addLayout(actions)
+        self.add_feedback()
 
     @staticmethod
     def _password_edit(placeholder: str) -> QLineEdit:
@@ -523,29 +388,22 @@ class AccountCard(QFrame):
         edit.setEchoMode(QLineEdit.EchoMode.Password)
         return edit
 
-    def _show_error(self, text: str) -> None:
-        self.status.hide()
-        self.error.setText(text)
-        self.error.show()
-
     def _on_change(self) -> None:
         current, new = self.current_edit.text(), self.new_edit.text()
         if new != self.repeat_edit.text():
-            self._show_error("Нові паролі не збігаються")
+            self.show_error("Нові паролі не збігаються")
             return
         try:
             code = self._runner(lambda auth: auth.change_password(self.teacher_id, current, new))
         except AuthError as error:
-            self._show_error(str(error))
+            self.show_error(str(error))
             self.current_edit.clear()
             return
         except Exception:
             logging.exception("Не вдалося змінити пароль")
-            self._show_error(GENERIC_ERROR)
+            self.show_error(GENERIC_ERROR)
             return
         for edit in (self.current_edit, self.new_edit, self.repeat_edit):
             edit.clear()
-        self.error.hide()
-        self.status.setText("Пароль змінено.")
-        self.status.show()
+        self.show_status("Пароль змінено.")
         self._show_code(self, code)
