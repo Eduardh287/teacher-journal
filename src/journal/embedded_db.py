@@ -402,7 +402,12 @@ class EmbeddedDb:
                     log.info("Створюю базу %s", DB_NAME)
                     conn.execute(f'CREATE DATABASE "{DB_NAME}" ENCODING \'UTF8\' TEMPLATE template0')
         except psycopg.Error as error:
-            log.error("Не вдалося підключитися до вбудованої бази: %s", type(error).__name__)
+            sqlstate = getattr(error, "sqlstate", None)  # лише код, без тексту (у ньому може бути пароль)
+            log.error(
+                "Не вдалося підключитися до вбудованої бази: %s%s",
+                type(error).__name__,
+                f" (sqlstate {sqlstate})" if sqlstate else "",
+            )
             raise EmbeddedDbError(
                 "Не вдалося підключитися до бази даних. Якщо це повторюється — перезавантажте "
                 "комп'ютер. Деталі — у журналі."
@@ -431,21 +436,35 @@ class EmbeddedDb:
         return self.url
 
     def stop(self) -> None:
-        """Зупиняє сервер лише якщо його запустили ми (чужий сервер не чіпаємо)."""
+        """Зупиняє сервер лише якщо його запустили ми (чужий сервер не чіпаємо).
+
+        pg_ctl stop завершується з кодом 1, коли сервера немає, тому спершу дивимось is_running().
+        """
         if not self.started_by_us:
             return
-        result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
-        if result.returncode not in (0, 3):  # 3 — сервер і так не працював
-            log.warning("pg_ctl stop: код %s", result.returncode)
-        self.started_by_us = False
-        self.url = None
+        try:
+            if self.is_running():
+                result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
+                if result.returncode != 0:
+                    log.warning("pg_ctl stop: код %s", result.returncode)
+        finally:
+            self.started_by_us = False
+            self.url = None
 
     def force_stop(self) -> bool:
-        """Зупиняє сервер незалежно від того, хто його запустив (для інсталятора). True — не працює."""
-        result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
+        """Зупиняє сервер незалежно від того, хто його запустив (для інсталятора).
+
+        Якщо сервер не працює — нічого не робить і повертає True (pg_ctl stop у такому разі дав би код 1).
+        Інакше True, коли після зупинки сервер справді не працює.
+        """
         self.started_by_us = False
         self.url = None
-        return result.returncode in (0, 3)
+        if not self.is_running():
+            return True
+        result = self._pg_ctl("stop", "-m", "fast", "-w", "-t", "30", timeout=60)
+        if result.returncode != 0:
+            log.warning("pg_ctl stop: код %s", result.returncode)
+        return not self.is_running()
 
 
 # ---------------------------------------------------------------- міграції

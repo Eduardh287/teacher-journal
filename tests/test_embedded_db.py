@@ -419,6 +419,8 @@ def test_start_failure_with_server_down_raises(fake_pg, monkeypatch, start_code)
 
 # C: stop лише якщо запустили ми
 
+_EmbeddedDbClass = e.EmbeddedDb
+
 def _prepare_running(layout, monkeypatch, fake):
     layout.secret_file.write_text("pw")
     layout.pgdata.mkdir(exist_ok=True)
@@ -441,7 +443,7 @@ def test_reused_server_is_not_stopped(fake_pg, monkeypatch):
 
 def test_started_server_is_stopped(fake_pg, monkeypatch):
     layout, pg = fake_pg
-    fake = _Pg(monkeypatch, status_codes=(3,))
+    fake = _Pg(monkeypatch, status_codes=(3, 0))  # до запуску не працює, потім працює
     _prepare_running(layout, monkeypatch, fake)
     db = e.EmbeddedDb(layout, pg_root=pg)
     db.ensure_running()
@@ -451,8 +453,6 @@ def test_started_server_is_stopped(fake_pg, monkeypatch):
     db.stop()  # повторно — нічого
     assert len(fake.commands("stop")) == 1
 
-
-_EmbeddedDbClass = e.EmbeddedDb
 
 
 def test_error_path_does_not_stop_a_foreign_server(fake_pg, monkeypatch):
@@ -475,16 +475,38 @@ def test_error_path_does_not_stop_a_foreign_server(fake_pg, monkeypatch):
 
 def test_force_stop_ignores_ownership(fake_pg, monkeypatch):
     layout, pg = fake_pg
-    fake = _Pg(monkeypatch)
+    fake = _Pg(monkeypatch, status_codes=(0, 3))  # працює, після stop — ні
     db = e.EmbeddedDb(layout, pg_root=pg)
     assert not db.started_by_us
     assert db.force_stop() is True
     assert len(fake.commands("stop")) == 1
 
 
+def test_force_stop_when_nothing_runs_does_not_call_pg_ctl_stop(fake_pg, monkeypatch):
+    layout, pg = fake_pg  # status 3 / немає postmaster.pid
+    fake = _Pg(monkeypatch, status_codes=(3,))
+    assert e.EmbeddedDb(layout, pg_root=pg).force_stop() is True
+    assert fake.commands("stop") == []
+
+
+def test_force_stop_reports_failure_when_server_still_runs(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    _Pg(monkeypatch, status_codes=(0,))
+    assert e.EmbeddedDb(layout, pg_root=pg).force_stop() is False
+
+
+def test_stop_when_server_already_gone_does_not_call_pg_ctl_stop(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch, status_codes=(3,))
+    db = e.EmbeddedDb(layout, pg_root=pg)
+    db.started_by_us = True
+    db.stop()
+    assert fake.commands("stop") == [] and not db.started_by_us
+
+
 def test_stop_server_for_installer(fake_pg, monkeypatch):
     layout, pg = fake_pg
-    fake = _Pg(monkeypatch)
+    fake = _Pg(monkeypatch, status_codes=(0, 3))
     monkeypatch.setattr(e, "resolve_layout", lambda: layout)
     monkeypatch.setattr(e, "pgsql_dir", lambda: pg)
     assert e.stop_server_for_installer() is True  # кластера ще немає — нічого робити
@@ -493,6 +515,18 @@ def test_stop_server_for_installer(fake_pg, monkeypatch):
     (layout.pgdata / "PG_VERSION").write_text("17")
     assert e.stop_server_for_installer() is True
     assert len(fake.commands("stop")) == 1
+
+
+def test_ensure_database_failure_logs_sqlstate_but_not_message(fake_pg, monkeypatch, caplog):
+    layout, pg = fake_pg
+
+    def boom(*a, **k):
+        raise psycopg.errors.InvalidPassword("password authentication failed SECRETTEXT")
+
+    monkeypatch.setattr(psycopg, "connect", boom)
+    with caplog.at_level("ERROR"), pytest.raises(e.EmbeddedDbError):
+        e.EmbeddedDb(layout, pg_root=pg).ensure_database("pw", 54329)
+    assert "28P01" in caplog.text and "SECRETTEXT" not in caplog.text
 
 
 # running_port

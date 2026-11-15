@@ -70,8 +70,13 @@ def run_smoke() -> int:
 def run_stop_server() -> int:
     """--stop-server: для інсталятора. Зупиняє сервер цієї установки; без вікон і без помилок назовні.
 
-    Якщо програма відкрита (замок зайнятий) — нічого не чіпає: сервер потрібен їй.
+    Лише у зібраній (bundled) версії (як і --smoke). Якщо програма відкрита (замок зайнятий) —
+    нічого не чіпає: сервер потрібен їй.
     """
+    if not embedded_db.is_bundled_mode():
+        if sys.stdout:
+            print("STOP-SERVER FAIL not bundled")
+        return 1
     lock = single_instance.acquire()
     if lock is None:
         return single_instance.ALREADY_OPEN_CODE
@@ -95,7 +100,10 @@ def main() -> None:
     logging.info("Запуск застосунку; журнал: %s", log_path or "лише stderr")
 
     if "--stop-server" in sys.argv:
-        sys.exit(run_stop_server())
+        sys.exit(run_stop_server())  # без mutex: інсталятор уже перевірив, що програму закрито
+    if embedded_db.is_bundled_mode():
+        # Якнайраніше (і для --smoke): за цим mutex інсталятор бачить, що програма відкрита.
+        single_instance.create_app_mutex()
     if "--smoke" in sys.argv:
         sys.exit(run_smoke())
 
@@ -112,7 +120,6 @@ def main() -> None:
         if _instance_lock is None:
             QMessageBox.information(None, "Електронний журнал", single_instance.ALREADY_OPEN_TEXT)
             sys.exit(single_instance.ALREADY_OPEN_CODE)
-        single_instance.create_app_mutex()
 
     try:
         if embedded_db.is_bundled_mode():
