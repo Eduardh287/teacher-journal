@@ -738,7 +738,7 @@ def lesson_error(qdate):
 state("lesson_vacation_error", lesson_error((2026, 7, 15)), size=None)
 state("lesson_outside_year_error", lesson_error((2025, 10, 14)), size=None)
 
-# 10. Видалення уроку й журналу
+# 10. Видалення журналу
 
 
 def build_delete_journal_typed():

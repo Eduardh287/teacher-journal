@@ -4,7 +4,9 @@
 Кожен метод перевіряє, що журнал/урок належить викладачу teacher_id (через classes.teacher_id);
 чужий чи неіснуючий об'єкт дає JournalNotFound / LessonNotFound — наявність не розкривається.
 """
+from collections import Counter
 from collections.abc import Callable
+from typing import NamedTuple
 from datetime import date
 
 from sqlalchemy.orm import Session
@@ -20,6 +22,7 @@ from journal.models import (
     Lesson,
     LessonEntry,
     LessonType,
+    Student,
 )
 from journal.repositories.journal_repository import JournalRepository
 from journal.services import grade_calc
@@ -155,14 +158,20 @@ class JournalService:
         journal = self._own_journal(teacher_id, journal_id)
         if semester not in (1, 2):
             raise JournalError("Семестр має бути 1 або 2")
-        all_lessons = self.repo.all_lessons(journal_id)
+        rows = self._rows(journal)
+        all_lessons = rows.lessons
         numbers = _numbers(all_lessons)
         lessons = [lesson for lesson in all_lessons if lesson.semester == semester]
-        lesson_ids = [lesson.id for lesson in lessons]
-        counts = self.repo.entry_counts(lesson_ids)
+        lesson_ids = {lesson.id for lesson in lessons}
+        counts = Counter(e.lesson_id for e in rows.entries)
 
-        # Активні учні за номером, потім вибулі, у яких є дані в цьому журналі (за алфавітом).
-        with_entries = self.repo.student_ids_with_entries(journal_id)
+        # Активні учні за номером, потім вибулі, у яких є дані в цьому журналі (за алфавітом):
+        # клітинка, оцінка extra-стовпчика чи ручна підсумкова.
+        with_entries = (
+            {e.student_id for e in rows.entries}
+            | {g.student_id for g in rows.extra_grades}
+            | {f.student_id for f in rows.finals}
+        )
         students = self.repo.students(journal.class_id)
         active = sorted((s for s in students if not s.archived), key=lambda s: (s.position, s.id))
         archived = sorted(
@@ -170,12 +179,10 @@ class JournalService:
             key=lambda s: (ukrainian_sort_key(s.full_name), s.id),
         )
         shown = active + archived
-        cells = {(e.student_id, e.lesson_id): _cell_info(e) for e in self.repo.entries(lesson_ids)}
-        total = self.repo.lesson_counts([journal_id]).get(journal_id, 0)
+        cells = {(e.student_id, e.lesson_id): _cell_info(e) for e in rows.entries if e.lesson_id in lesson_ids}
 
-        columns = self.repo.extra_columns(journal_id)
-        infos = _column_infos(columns, self.repo.extra_grade_counts(journal_id), all_lessons)
-        mine = [c for c in columns if c.semester == semester]
+        infos = _column_infos(rows.columns, Counter(g.column_id for g in rows.extra_grades), all_lessons)
+        mine = [c for c in rows.columns if c.semester == semester]
         ordered = _display_order(all_lessons, lessons, mine)
         grid_columns = [GridColumn(kind, item.id) for kind, item in ordered] + [GridColumn("semester", None)]
         shown_keys = {("semester", semester)} | {(c.kind.value, c.id) for c in mine}
@@ -184,11 +191,11 @@ class JournalService:
             shown_keys.add(("annual", 0))
         computed = {
             (sid, key): cell
-            for (sid, key), cell in self._computed(journal, [st.id for st in shown]).items()
+            for (sid, key), cell in self._computed([st.id for st in shown], rows).items()
             if key in shown_keys
         }
         return GridData(
-            journal=_journal_info(journal, total),
+            journal=_journal_info(journal, len(all_lessons)),
             semester=semester,
             students=[StudentInfo(s.id, s.full_name, s.position, s.archived) for s in shown],
             lessons=[
@@ -217,7 +224,7 @@ class JournalService:
             journal_id=journal_id,
             lesson_date=lesson_date,
             semester=semester,
-            lesson_type=_lesson_type(lesson_type),
+            lesson_type=_enum(LessonType, lesson_type, "Невідомий тип уроку"),
             topic=_clean_topic(topic),
             homework=_clean_homework(homework),
         )
@@ -235,14 +242,10 @@ class JournalService:
     ) -> LessonInfo:
         lesson = self._own_lesson(teacher_id, lesson_id)
         semester = _check_date(lesson.journal, lesson_date)
-        new_type = _lesson_type(lesson_type)
-        new_topic = _clean_topic(topic)
-        new_homework = _clean_homework(homework)
-        lesson.lesson_date = lesson_date
-        lesson.semester = semester
-        lesson.lesson_type = new_type
-        lesson.topic = new_topic
-        lesson.homework = new_homework
+        new_type = _enum(LessonType, lesson_type, "Невідомий тип уроку")  # усю перевірку — до першого присвоєння
+        topic, homework = _clean_topic(topic), _clean_homework(homework)
+        lesson.lesson_date, lesson.semester, lesson.lesson_type = lesson_date, semester, new_type
+        lesson.topic, lesson.homework = topic, homework
         # Стовпчики, прив'язані до цього уроку, їдуть разом з ним (дата й семестр якоря).
         for column in self.repo.columns_anchored_to(lesson.id):
             column.after_date = lesson_date
@@ -266,7 +269,7 @@ class JournalService:
                 f"Урок має оцінки чи позначки ({count}) — його не можна видалити. "
                 "Спершу очистьте клітинки цього уроку."
             )
-            withdrawn = self.repo.withdrawn_with_entries(lesson_id)
+            withdrawn = self.repo.withdrawn_with(LessonEntry, LessonEntry.lesson_id, lesson_id)
             if withdrawn:  # рядок вибулого лише для перегляду — пояснюємо, як усе ж очистити
                 message += _WITHDRAWN_HINT.format(names=", ".join(withdrawn))
             raise JournalError(message)
@@ -303,9 +306,7 @@ class JournalService:
             if column.id in duplicates:
                 self.repo.session.delete(column)
                 continue
-            column.after_lesson_id = previous.id
-            column.after_date = previous.lesson_date
-            column.semester = previous.semester
+            _attach(column, previous)
         self.repo.session.flush()
 
     # --- стовпчики без дати ---
@@ -315,14 +316,12 @@ class JournalService:
     ) -> ExtraColumnInfo:
         """Додає «Тематичну» / «Зошит» після уроку; дату користувач не задає."""
         journal = self._own_journal(teacher_id, journal_id)
-        column_kind = _column_kind(kind)
+        column_kind = _enum(ExtraColumnKind, kind, "Невідомий вид стовпчика")
         anchor = self._anchor(journal, after_lesson_id)
         if self.repo.find_extra_column(journal.id, column_kind, anchor.id) is not None:
             raise JournalError(COLUMN_EXISTS)
-        column = ExtraColumn(
-            journal_id=journal.id, kind=column_kind, semester=anchor.semester,
-            after_date=anchor.lesson_date, after_lesson_id=anchor.id,
-        )
+        column = ExtraColumn(journal_id=journal.id, kind=column_kind)
+        _attach(column, anchor)
         self.repo.add(column)
         return self._column_info(column)
 
@@ -333,9 +332,7 @@ class JournalService:
         other = self.repo.find_extra_column(column.journal_id, column.kind, anchor.id)
         if other is not None and other.id != column.id:
             raise JournalError(COLUMN_EXISTS)
-        column.after_lesson_id = anchor.id
-        column.after_date = anchor.lesson_date
-        column.semester = anchor.semester
+        _attach(column, anchor)
         self.repo.session.flush()
         return self._column_info(column)
 
@@ -345,7 +342,7 @@ class JournalService:
         count = self.repo.extra_grade_counts(column.journal_id).get(column.id, 0)
         if column.kind is ExtraColumnKind.NOTEBOOK and count:
             message = f"У стовпчику «Зошит» є оцінки ({count}) — його не можна видалити. Спершу очистьте їх."
-            withdrawn = self.repo.withdrawn_with_extra_grades(column.id)
+            withdrawn = self.repo.withdrawn_with(ExtraGrade, ExtraGrade.column_id, column.id)
             if withdrawn:
                 message += _WITHDRAWN_HINT.format(names=", ".join(withdrawn))
             raise JournalError(message)
@@ -366,15 +363,8 @@ class JournalService:
 
         grade=None і na=False — прибрати ручне значення (повернути автоматичне)."""
         journal = self._own_journal(teacher_id, journal_id)
-        student = self.repo.get_student(student_id)
-        if student is None or student.class_id != journal.class_id:
-            raise JournalError("Учня не знайдено")
-        if student.archived:
-            raise JournalError("Учень вибув — його клітинки лише для перегляду")
-        if grade is not None and (
-            isinstance(grade, bool) or not isinstance(grade, int) or not 1 <= grade <= 12
-        ):
-            raise JournalError("Оцінка має бути від 1 до 12")
+        self._own_student(journal.class_id, student_id, editable=True)
+        _check_grade(grade)
         if grade is not None and na:
             raise JournalError("Вкажіть або оцінку, або «н/а»")
         kind, ident = key
@@ -407,9 +397,7 @@ class JournalService:
     ) -> dict[ComputedKey, ComputedCell]:
         """Усі обчислювані клітинки учня (UI оновлює рядок після кожного set_cell)."""
         journal = self._own_journal(teacher_id, journal_id)
-        student = self.repo.get_student(student_id)
-        if student is None or student.class_id != journal.class_id:
-            raise JournalError("Учня не знайдено")
+        self._own_student(journal.class_id, student_id)
         return self._student_cells(journal, student_id)
 
     # --- клітинки ---
@@ -425,19 +413,14 @@ class JournalService:
     ) -> CellInfo | None:
         """Повний стан клітинки. Порожній стан («присутній», без оцінки й коментаря) видаляє рядок."""
         lesson = self._own_lesson(teacher_id, lesson_id)
-        student = self.repo.get_student(student_id)
-        if student is None or student.class_id != lesson.journal.class_id:
-            raise JournalError("Учня не знайдено")
-        if student.archived:
-            raise JournalError("Учень вибув — його клітинки лише для перегляду")
+        self._own_student(lesson.journal.class_id, student_id, editable=True)
         if attendance not in ("present", "absent", "sick", "late"):
             raise JournalError("Невідомий вид відвідування")
         if grade is not None:
-            if isinstance(grade, bool) or not isinstance(grade, int) or not 1 <= grade <= 12:
-                raise JournalError("Оцінка має бути від 1 до 12")
+            _check_grade(grade)
             if attendance in ("absent", "sick"):
                 raise JournalError("Відсутньому учню не можна поставити оцінку")
-        comment = _clean_comment(comment)
+        comment = _clean(comment, MAX_COMMENT, "Коментар")
 
         entry = self.repo.get_entry(lesson_id, student_id)
         if attendance == "present" and grade is None and comment is None:
@@ -468,6 +451,14 @@ class JournalService:
         if lesson is None or lesson.journal.school_class.teacher_id != teacher_id:
             raise LessonNotFound("Урок не знайдено")
         return lesson
+
+    def _own_student(self, class_id: int, student_id: int, editable: bool = False) -> Student:
+        student = self.repo.get_student(student_id)
+        if student is None or student.class_id != class_id:
+            raise JournalError("Учня не знайдено")
+        if editable and student.archived:
+            raise JournalError("Учень вибув — його клітинки лише для перегляду")
+        return student
 
     def _own_column(self, teacher_id: int, column_id: int) -> ExtraColumn:
         column = self.repo.get_extra_column(column_id)
@@ -506,24 +497,32 @@ class JournalService:
         row.grade = grade
         row.is_na = na
 
+    def _rows(self, journal: Journal, student_id: int | None = None) -> "_Rows":
+        """Усе, з чого рахуються клітинки журналу, — по одному запиту; з student_id — лише дані одного учня."""
+        lessons = self.repo.all_lessons(journal.id)
+        return _Rows(
+            lessons,
+            self.repo.extra_columns(journal.id),
+            self.repo.entries([lesson.id for lesson in lessons], student_id),
+            self.repo.extra_grades(journal.id, student_id),
+            self.repo.final_grades(journal.id, student_id),
+        )
+
     def _student_cells(self, journal: Journal, student_id: int) -> dict[ComputedKey, ComputedCell]:
-        computed = self._computed(journal, [student_id])
+        computed = self._computed([student_id], self._rows(journal, student_id))
         return {key: cell for (sid, key), cell in computed.items() if sid == student_id}
 
-    def _computed(
-        self, journal: Journal, student_ids: list[int]
-    ) -> dict[tuple[int, ComputedKey], ComputedCell]:
+    def _computed(self, student_ids: list[int], rows: "_Rows") -> dict[tuple[int, ComputedKey], ComputedCell]:
         """Обчислювані клітинки (тематичні, зошит, семестрові, річна) для учнів — за один прохід."""
         wanted = set(student_ids)
-        lessons = self.repo.all_lessons(journal.id)
+        lessons, columns = rows.lessons, rows.columns
         # Оцінки уроків учня: урок → оцінка. Лише рядки з оцінкою: н/хв/з і коментарі не рахуються.
         grades: dict[int, dict[int, int]] = {sid: {} for sid in wanted}
-        for entry in self.repo.entries([lesson.id for lesson in lessons]):
+        for entry in rows.entries:
             if entry.grade is not None and entry.student_id in wanted:
                 grades[entry.student_id][entry.lesson_id] = entry.grade
-        columns = self.repo.extra_columns(journal.id)
-        extra = {(g.column_id, g.student_id): g for g in self.repo.extra_grades(journal.id)}
-        finals = {(f.student_id, f.kind): f for f in self.repo.final_grades(journal.id)}
+        extra = {(g.column_id, g.student_id): g for g in rows.extra_grades}
+        finals = {(f.student_id, f.kind): f for f in rows.finals}
         # Порядок таблиці в кожному семестрі: тематична підсумовує всі оцінки уроків між попередньою
         # тематичною («Зошит» — не межа й не рахується) і собою — саме в цьому порядку.
         sequence = {
@@ -564,6 +563,14 @@ class JournalService:
                         None, False, 0, 0, row.grade if row else None, False
                     )
         return result
+
+
+class _Rows(NamedTuple):
+    lessons: list[Lesson]
+    columns: list[ExtraColumn]
+    entries: list[LessonEntry]
+    extra_grades: list[ExtraGrade]
+    finals: list[FinalGrade]
 
 
 def _cell(calc: grade_calc.Calc, override) -> ComputedCell:
@@ -628,11 +635,24 @@ def _column_infos(
     return infos
 
 
-def _column_kind(code: str) -> ExtraColumnKind:
+def _enum(cls, code: str, message: str):
+    """Член перелічення за кодом або JournalError."""
     try:
-        return ExtraColumnKind(code)
+        return cls(code)
     except ValueError:
-        raise JournalError("Невідомий вид стовпчика") from None
+        raise JournalError(message) from None
+
+
+def _check_grade(grade: int | None) -> None:
+    if grade is not None and (isinstance(grade, bool) or not isinstance(grade, int) or not 1 <= grade <= 12):
+        raise JournalError("Оцінка має бути від 1 до 12")
+
+
+def _attach(column: ExtraColumn, lesson: Lesson) -> None:
+    """Прив'язує стовпчик до уроку-якоря: дата й семестр беруться з нього."""
+    column.after_lesson_id = lesson.id
+    column.after_date = lesson.lesson_date
+    column.semester = lesson.semester
 
 
 def _check_date(journal: Journal, lesson_date: date) -> int:
@@ -645,32 +665,20 @@ def _check_date(journal: Journal, lesson_date: date) -> int:
     return semester
 
 
-def _lesson_type(code: str) -> LessonType:
-    try:
-        return LessonType(code)
-    except ValueError:
-        raise JournalError("Невідомий тип уроку") from None
+def _clean(text: str | None, limit: int, label: str) -> str | None:
+    """Обрізані пробіли; порожнє → None; понад limit символів → JournalError."""
+    text = (text or "").strip()
+    if len(text) > limit:
+        raise JournalError(f"{label} — не довше {limit} символів")
+    return text or None
 
 
 def _clean_topic(topic: str | None) -> str | None:
-    topic = (topic or "").strip()
-    if len(topic) > MAX_TOPIC:
-        raise JournalError(f"Тема — не довше {MAX_TOPIC} символів")
-    return topic or None
+    return _clean(topic, MAX_TOPIC, "Тема")
 
 
 def _clean_homework(homework: str | None) -> str | None:
-    homework = (homework or "").strip()
-    if len(homework) > MAX_HOMEWORK:
-        raise JournalError(f"Домашнє завдання — не довше {MAX_HOMEWORK} символів")
-    return homework or None
-
-
-def _clean_comment(comment: str | None) -> str | None:
-    comment = (comment or "").strip()
-    if len(comment) > MAX_COMMENT:
-        raise JournalError(f"Коментар — не довше {MAX_COMMENT} символів")
-    return comment or None
+    return _clean(homework, MAX_HOMEWORK, "Домашнє завдання")
 
 
 def _journal_info(j: Journal, lesson_count: int) -> JournalInfo:

@@ -13,7 +13,6 @@ import logging
 import os
 import secrets
 import socket
-import string
 import subprocess
 import sys
 import tempfile
@@ -197,8 +196,7 @@ def resolve_layout(
 # ---------------------------------------------------------------- секрет і порт
 
 def generate_secret(length: int = SECRET_LENGTH) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    return secrets.token_hex(length // 2)
 
 
 def secret_present(secret_file: Path) -> bool:

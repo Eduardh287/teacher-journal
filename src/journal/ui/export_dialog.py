@@ -34,14 +34,6 @@ GENERIC_EXPORT_ERROR = "Не вдалося створити файл. Спро�
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
 
-def _qdate(day: date) -> QDate:
-    return QDate(day.year, day.month, day.day)
-
-
-def _pydate(value: QDate) -> date:
-    return date(value.year(), value.month(), value.day())
-
-
 class ExportDialog(QDialog):
     """Вибір періоду: швидкі варіанти й дві дати «з» / «по»."""
 
@@ -112,7 +104,7 @@ class ExportDialog(QDialog):
             return  # «Власний період» — дати лишаються як є
         for edit, day in ((self.from_edit, period[0]), (self.to_edit, period[1])):
             edit.blockSignals(True)
-            edit.setDate(_qdate(day))
+            edit.setDate(day)
             edit.blockSignals(False)
         self.error_label.hide()
 
@@ -123,7 +115,7 @@ class ExportDialog(QDialog):
         self.error_label.hide()
 
     def period(self) -> tuple[date, date]:
-        return _pydate(self.from_edit.date()), _pydate(self.to_edit.date())
+        return self.from_edit.date().toPython(), self.to_edit.date().toPython()
 
     def _on_submit(self) -> None:
         start, end = self.period()

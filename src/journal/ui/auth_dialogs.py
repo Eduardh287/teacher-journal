@@ -6,8 +6,8 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
-from journal.db import session_scope
 from journal.services.auth_service import AuthError, AuthService, CurrentUser
+from journal.ui.service_scope import service_scope
 from journal.ui.widgets import brand_mark, button, field, label
 
 DB_ERROR_TEXT = "Не вдалося підключитися до бази даних"
@@ -25,9 +25,9 @@ def run_auth_action(action: Callable[[AuthService], Any]) -> Any:
     решта AuthError відкочують транзакцію.
     """
     kept: AuthError | None = None
-    with session_scope() as session:
+    with service_scope(AuthService) as service:
         try:
-            result = action(AuthService(session))
+            result = action(service)
         except AuthError as error:
             if not error.persist:
                 raise

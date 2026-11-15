@@ -10,7 +10,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from journal.services.journal_types import ComputedCell, GridColumn
-from journal.ui.journal_grid import computed_text, computed_tooltip, grades_text
+from journal.ui.journal_grid import computed_text, computed_tooltip
 from tests.ui.conftest import type_text
 
 L1, L2 = 1, 2
@@ -512,9 +512,12 @@ def test_homework_error_shows_banner(page, fake):
 
 # --- чисті функції тексту ---
 
-def test_grades_text_plural():
-    assert [grades_text(n) for n in (1, 2, 5, 11, 21)] == [
-        "1 оцінка", "2 оцінки", "5 оцінок", "11 оцінок", "21 оцінка"
+def test_plural_forms():
+    from journal.services.grid_text import plural
+
+    forms = ("оцінка", "оцінки", "оцінок")
+    assert [plural(n, *forms) for n in (1, 2, 5, 11, 12, 21, 22, 25, 100)] == [
+        "оцінка", "оцінки", "оцінок", "оцінок", "оцінок", "оцінка", "оцінки", "оцінок", "оцінок"
     ]
 
 

@@ -1,6 +1,6 @@
 """Сторінка «Класи»: список класів (картки) і детальний вигляд класу зі списком учнів.
 
-UI працює лише з ClassService (через journal.db.session_scope) та його DTO.
+UI працює лише з ClassService (через ui.service_scope) та його DTO.
 Кожен виклик сервісу — окрема транзакція; ClassError ловимо ПОЗА блоком with,
 щоб транзакція відкотилась, і показуємо його користувачу.
 """
@@ -29,30 +29,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.db import session_scope
 from journal.services.auth_service import CurrentUser
 from journal.services.class_service import ClassError, ClassInfo, ClassService, StudentInfo
+from journal.services.grid_text import plural
 from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
 from journal.ui.journal_dialogs import conflict_text
+from journal.ui.service_scope import service_scope
 from journal.ui.widgets import ElidedLabel, button, card, label
+
+def _students_text(n: int) -> str:
+    return f"{n} {plural(n, 'учень', 'учні', 'учнів')}"
+
 
 COLUMNS = 3  # кількість карток у рядку
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
-
-
-def students_text(n: int) -> str:
-    """«1 учень», «2 учні», «5 учнів», «11 учнів», «22 учні»."""
-    if n % 100 in (11, 12, 13, 14):
-        word = "учнів"
-    elif n % 10 == 1:
-        word = "учень"
-    elif n % 10 in (2, 3, 4):
-        word = "учні"
-    else:
-        word = "учнів"
-    return f"{n} {word}"
 
 
 class _ClassCard(QFrame):
@@ -79,7 +71,7 @@ class _ClassCard(QFrame):
         layout.addLayout(top)
         layout.addWidget(label(info.school_year, muted=True))
         layout.addStretch(1)
-        layout.addWidget(label(students_text(info.student_count)))
+        layout.addWidget(label(_students_text(info.student_count)))
 
         # Дочірні мітки пропускають події миші до картки: hover і клік працюють на всій площі.
         for child in self.findChildren(QLabel):
@@ -120,8 +112,8 @@ class ClassesPage(QWidget):
     def _call(self, action: Callable[[ClassService], Any]) -> tuple[bool, Any]:
         """Виконує action в одній транзакції. Повертає (успіх, результат); помилку показує."""
         try:
-            with session_scope() as session:
-                result = action(ClassService(session))
+            with service_scope(ClassService) as service:
+                result = action(service)
         except ClassError as error:
             QMessageBox.warning(self, "Не вдалося виконати дію", str(error))
             return False, None
@@ -417,7 +409,7 @@ class ClassesPage(QWidget):
     def _render_detail(self) -> None:
         info = self._current_class
         self.detail_title.setText(f"{info.name} · {info.school_year}")
-        subtitle = students_text(len([s for s in self._students if not s.archived]))
+        subtitle = _students_text(len([s for s in self._students if not s.archived]))
         self.detail_subtitle.setText(subtitle + (" · клас в архіві" if info.archived else ""))
 
         archived = info.archived

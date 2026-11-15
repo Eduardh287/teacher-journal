@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QDialog
 
 from journal.services.auth_service import AuthError, AuthService
 from journal.ui import auth_dialogs, theme
+from journal.ui import service_scope as service_scope_module
 from journal.ui.auth_dialogs import (
     ForgotPasswordDialog,
     LoginDialog,
@@ -260,7 +261,7 @@ def test_run_auth_action_keeps_failure_counter(monkeypatch):
             raise
         events.append("commit")
 
-    monkeypatch.setattr(auth_dialogs, "session_scope", fake_scope)
+    monkeypatch.setattr(service_scope_module, "session_scope", fake_scope)
     monkeypatch.setattr(auth_dialogs, "AuthService", lambda s: s)
 
     def failed(_):

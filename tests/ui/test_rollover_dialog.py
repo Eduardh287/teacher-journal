@@ -157,14 +157,6 @@ def test_no_catch_up_text_when_nothing_skipped():
     assert item_text(catch_up(skipped=0)) == "9-А → 11-А (2026-2027), учнів: 25"
 
 
-def test_years_word_forms():
-    from journal.ui.rollover_dialog import years_word
-
-    assert [years_word(n) for n in (1, 2, 4, 5, 11, 12, 21, 22, 25)] == [
-        "1 рік", "2 роки", "4 роки", "5 років", "11 років", "12 років", "21 рік", "22 роки", "25 років",
-    ]
-
-
 def test_dialog_shows_catch_up_line_and_note(qtbot):
     dialog = RolloverDialog([catch_up(), promote()])
     qtbot.addWidget(dialog)

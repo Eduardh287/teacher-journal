@@ -104,11 +104,6 @@ def _parse_lines(text: str) -> list[tuple[int, str]]:
     return result
 
 
-def parse_student_list(text: str) -> list[str]:
-    """Імена зі вставленого списку (один учень у рядку). Дублікати тут не прибираються."""
-    return [name for _, name in _parse_lines(text)]
-
-
 def _validate_year(school_year: str) -> str:
     match = _YEAR_RE.match(school_year.strip())
     if not match or int(match.group(2)) != int(match.group(1)) + 1:
@@ -319,9 +314,9 @@ class ClassService:
         from journal.services.boundaries_rows import boundaries_of
         from journal.services.settings_service import apply_boundaries
 
-        journals = self.repo.journals_of_class(school_class.id)
+        journals_repo = JournalRepository(self.repo.session)
         apply_boundaries(
-            JournalRepository(self.repo.session), journals, boundaries_of(school_class.teacher)
+            journals_repo, journals_repo.journals_of_class(school_class.id), boundaries_of(school_class.teacher)
         )
 
     def renumber(self, class_id: int) -> None:

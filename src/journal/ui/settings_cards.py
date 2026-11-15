@@ -2,7 +2,8 @@
 import logging
 import os
 from collections.abc import Callable
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -25,33 +26,17 @@ from journal.services.semesters import (
     SemesterBoundaries,
     SemesterError,
 )
-from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
+from journal.services.settings_service import SettingsService
+from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError, SubjectService
 from journal.services.auth_service import AuthError
 from journal.logging_setup import log_failure
 from journal.ui import auth_dialogs, backup_dialogs
+from journal.ui.service_scope import service_scope
 from journal.ui.theme import app_settings
 from journal.ui.widgets import ElidedLabel, button, label
 
 MAX_CONFLICTS_SHOWN = 10
 GENERIC_ERROR = "Не вдалося зберегти зміни"
-
-
-@contextmanager
-def _default_settings_service():
-    from journal.db import session_scope
-    from journal.services.settings_service import SettingsService
-
-    with session_scope() as session:
-        yield SettingsService(session)
-
-
-@contextmanager
-def _default_subject_service():
-    from journal.db import session_scope
-    from journal.services.subject_service import SubjectService
-
-    with session_scope() as session:
-        yield SubjectService(session)
 
 
 def _error_label() -> QLabel:
@@ -92,7 +77,7 @@ class SemestersCard(QFrame):
     ) -> None:
         super().__init__()
         self.teacher_id = teacher_id
-        self._factory = service_factory or _default_settings_service
+        self._factory = service_factory or partial(service_scope, SettingsService)
         self._on_saved = on_saved
         self._loaded = DEFAULT_BOUNDARIES
 
@@ -210,7 +195,7 @@ class SubjectsCard(QFrame):
         on_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
-        self._factory = service_factory or _default_subject_service
+        self._factory = service_factory or partial(service_scope, SubjectService)
         self._on_changed = on_changed
 
         self.setObjectName("Card")
