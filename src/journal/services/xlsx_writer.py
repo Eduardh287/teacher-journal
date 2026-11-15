@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -15,8 +16,8 @@ from openpyxl.worksheet.properties import PageSetupProperties
 
 from journal.services.export_service import ExportError, ExportTable
 
-LOCKED_TEXT = "Не вдалося зберегти файл. Можливо, він відкритий в Excel — закрийте його й спробуйте ще раз."
-FAILED_TEXT = "Не вдалося зберегти файл. Перевірте, чи є доступ до цієї папки, і спробуйте ще раз."
+LOCKED_TEXT = "Не вдалося зберегти файл: він, мабуть, відкритий в Excel. Закрийте його й спробуйте ще раз."
+FAILED_TEXT = "Не вдалося записати файл у цю папку. Перевірте доступ до папки та вільне місце й спробуйте ще раз."
 
 SHEET_GRADES = "Журнал"
 SHEET_LESSONS = "Уроки"
@@ -41,6 +42,8 @@ class ExportWriteError(ExportError):
 
 def _put(cell, value) -> None:
     """Текст пишемо як текст: значення, що починається з «=», не стає формулою."""
+    if isinstance(value, str):
+        value = ILLEGAL_CHARACTERS_RE.sub("", value)
     cell.value = value
     if isinstance(value, str) and value.startswith("="):
         cell.data_type = "s"
@@ -52,12 +55,16 @@ def build_workbook(table: ExportTable) -> Workbook:
     ws = wb.active
     ws.title = SHEET_GRADES
 
-    ws.cell(1, 1, table.title).font = Font(bold=True, size=14)
-    ws.cell(2, 1, table.generated).font = Font(italic=True, color="666666")
+    title, generated = ws.cell(1, 1), ws.cell(2, 1)
+    _put(title, table.title)
+    _put(generated, table.generated)
+    title.font = Font(bold=True, size=14)
+    generated.font = Font(italic=True, color="666666")
 
     for column, text in ((1, "№"), (2, "Учень")):
         ws.merge_cells(start_row=3, start_column=column, end_row=4, end_column=column)
-        head = ws.cell(3, column, text)
+        head = ws.cell(3, column)
+        _put(head, text)
         head.font = Font(bold=True)
         head.alignment = _CENTER
         for row in (3, 4):
@@ -67,7 +74,9 @@ def build_workbook(table: ExportTable) -> Workbook:
     for offset, column in enumerate(table.columns):
         index = FIRST_GRADE_COLUMN + offset
         fill = _SOFT_FILL if column.kind in _SOFT_KINDS else _HEADER_FILL
-        top, bottom = ws.cell(3, index, column.header), ws.cell(4, index, column.date_text or None)
+        top, bottom = ws.cell(3, index), ws.cell(4, index)
+        _put(top, column.header)
+        _put(bottom, column.date_text or None)
         top.font = Font(bold=True)
         bottom.font = Font(size=9, color="555555")
         for head in (top, bottom):
@@ -94,7 +103,7 @@ def build_workbook(table: ExportTable) -> Workbook:
             cell.alignment = _CENTER
             cell.border = _BORDER
             if item.comment:
-                comment = Comment(item.comment, COMMENT_AUTHOR)
+                comment = Comment(ILLEGAL_CHARACTERS_RE.sub("", item.comment), COMMENT_AUTHOR)
                 comment.width, comment.height = 220, 90
                 cell.comment = comment
 
@@ -141,15 +150,17 @@ def write_export(table: ExportTable, path: str | Path) -> Path:
     temp_name: str | None = None
     try:
         workbook = build_workbook(table)
-        handle, temp_name = tempfile.mkstemp(prefix=".export_", suffix=".tmp", dir=target.parent)
-        os.close(handle)
-        workbook.save(temp_name)
-        os.replace(temp_name, target)
-        temp_name = None
-    except PermissionError:
-        raise ExportWriteError(LOCKED_TEXT) from None
-    except OSError:
-        raise ExportWriteError(FAILED_TEXT) from None
+        try:
+            handle, temp_name = tempfile.mkstemp(prefix=".export_", suffix=".tmp", dir=target.parent)
+            os.close(handle)
+            workbook.save(temp_name)
+        except OSError:
+            raise ExportWriteError(FAILED_TEXT) from None
+        try:
+            os.replace(temp_name, target)
+            temp_name = None
+        except OSError:  # найчастіше — файл відкритий в Excel (PermissionError)
+            raise ExportWriteError(LOCKED_TEXT) from None
     finally:
         if temp_name is not None:
             with contextlib.suppress(OSError):

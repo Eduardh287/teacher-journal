@@ -202,8 +202,8 @@ def export_journal(parent: QWidget | None, api_factory: ApiFactory, teacher_id: 
     except (ExportError, JournalError) as error:
         show_notice(parent, str(error))
         return None
-    except Exception:
-        logging.exception("Помилка під час підготовки експорту")
+    except Exception as error:
+        logging.error("Помилка під час підготовки експорту: %s", type(error).__name__)
         show_failure(parent, GENERIC_EXPORT_ERROR)
         return None
     path = choose_save_path(parent, suggest_file_name(info, start, end))
@@ -214,8 +214,8 @@ def export_journal(parent: QWidget | None, api_factory: ApiFactory, teacher_id: 
     except ExportError as error:
         show_failure(parent, str(error))
         return None
-    except Exception:
-        logging.exception("Помилка під час запису файлу експорту")
+    except Exception as error:
+        logging.error("Помилка під час запису файлу експорту: %s", type(error).__name__)
         show_failure(parent, GENERIC_EXPORT_ERROR)
         return None
     show_saved(parent, path)

@@ -182,3 +182,39 @@ def test_computed_cell_text_helpers():
     assert grid_text.computed_text("thematic", ComputedCell(None, True, 0, 0, None, False)) == "н/а"
     assert grid_text.computed_text("notebook", ComputedCell(None, False, 0, 0, 9, False)) == "9"
     assert grid_text.computed_text("thematic", None) == ""
+
+
+def test_withdrawn_with_notebook_grade_is_included(fake):
+    fake.put_extra_grade(2, 3, 9)  # «Зошит» (після 13.01) вибулого
+    table = build(fake, date(2026, 1, 13), date(2026, 1, 13))
+    assert [r.name for r in table.rows][-1] == "Вибулий Петро (вибув)"
+    assert table.rows[-1].cells[-1].text == "9"
+
+
+def test_withdrawn_with_manual_override_is_included(fake):
+    fake.put_extra_grade(1, 3, 8)  # ручна тематична
+    table = build(fake, date(2025, 9, 9), date(2025, 9, 9))
+    assert table.rows[-1].archived
+    other = build(fake, date(2025, 12, 31), date(2025, 12, 31))
+    assert not any(r.archived for r in other.rows)  # ручна тематична поза стовпцями періоду
+
+
+def test_withdrawn_with_only_auto_values_is_excluded(fake):
+    fake.put_cell(3, fake.ids[0], grade=9)  # запис 02.09 — поза періодом; тематична 09.09 порахується сама
+    table = build(fake, date(2025, 9, 9), date(2025, 9, 9))
+    assert [c.kind for c in table.columns] == ["lesson", "thematic"]
+    assert not any(r.archived for r in table.rows)
+
+
+def test_custom_boundaries_presets_and_semester_inclusion(fake):
+    from journal.services.semesters import SemesterBoundaries
+
+    fake.journal = replace(fake.journal, boundaries=SemesterBoundaries(9, 1, 2, 6))
+    fake.journals = [fake.journal]
+    presets = period_presets(fake.journal, date(2026, 1, 20))
+    assert presets["I семестр"] == (date(2025, 9, 1), date(2026, 1, 31))
+    assert presets["II семестр"] == (date(2026, 2, 1), date(2026, 6, 30))
+    assert presets["Поточний семестр"] == presets["I семестр"]
+    assert "semester" not in [c.kind for c in build(fake, date(2026, 1, 1), date(2026, 1, 30)).columns]
+    last = build(fake, date(2026, 1, 31), date(2026, 1, 31))
+    assert [(c.kind, c.header) for c in last.columns] == [("semester", "Сем I")]

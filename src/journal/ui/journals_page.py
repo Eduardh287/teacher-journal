@@ -45,8 +45,7 @@ from journal.services.journal_types import (
     LessonInfo,
     semester_for_date,
 )
-from journal.ui import icons, theme
-from journal.ui import export_dialog
+from journal.ui import export_dialog, icons, theme
 from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel

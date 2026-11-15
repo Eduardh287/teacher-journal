@@ -168,3 +168,30 @@ def test_export_from_real_service(session, tmp_path):
     # тематична й семестрова — як порахував сервіс (середнє 9, 8, 11 → 9; 7,5 → 8)
     assert ws.cell(5, 6).value == 9 and ws.cell(5, 8).value == 9
     assert ws.cell(6, 5).value == 7 and ws.cell(6, 4).value == "н"
+
+
+def test_title_and_headers_are_never_formulas(tmp_path):
+    from dataclasses import replace
+
+    table = replace(
+        sample_table(), title="=HYPERLINK(\"x\")", generated="=1+1",
+        columns=[ExportColumn("lesson", "=A1", "02.09", "regular")],
+        rows=[ExportRow(1, "Іван", [ExportCell("8", 8)])],
+    )
+    ws = load_workbook(write_export(table, tmp_path / "f.xlsx"))["Журнал"]
+    for ref in ("A1", "A2", "C3"):
+        assert ws[ref].data_type == "s" and ws[ref].value.startswith("=")
+
+
+def test_illegal_control_characters_are_stripped(tmp_path):
+    from dataclasses import replace
+
+    table = replace(
+        sample_table(),
+        rows=[ExportRow(1, "Іван\x0b", [ExportCell("8", 8), ExportCell("з 9", None, "ко\x0bм")])],
+        lessons=[ExportLesson(1, date(2025, 9, 2), "Звичайний урок", "Тема\x0bX", "")],
+    )
+    wb = load_workbook(write_export(table, tmp_path / "c.xlsx"))
+    assert wb["Журнал"]["B5"].value == "Іван"
+    assert wb["Журнал"]["D5"].comment.text == "ком"
+    assert wb["Уроки"]["D2"].value == "ТемаX"

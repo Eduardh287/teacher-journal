@@ -210,23 +210,14 @@ def build_export_table(
     students = list(grids[1].students)
     known = {s.id for s in students}
     students += [s for s in grids[2].students if s.id not in known]
-    selected_lessons = {
-        (grid.semester, column.id) for grid, column in chosen if column.kind == "lesson"
-    }
 
     rows: list[ExportRow] = []
     for student in students:
-        has_entry = any(
-            (student.id, lesson_id) in grid.cells
-            for grid in grids.values()
-            for sem, lesson_id in selected_lessons
-            if sem == grid.semester
-        )
-        if student.archived and not has_entry:
-            continue
         cells: list[ExportCell] = []
+        has_entry = False
         for grid, column in chosen:
             if column.kind == "lesson":
+                has_entry = has_entry or (student.id, column.id) in grid.cells
                 cell = grid.cells.get((student.id, column.id), _EMPTY)
                 cells.append(_to_cell(cell_text(cell), cell.comment))
                 continue
@@ -235,7 +226,13 @@ def build_export_table(
                 else ("annual", 0) if column.kind == "annual"
                 else (column.kind, column.id)
             )
-            cells.append(_to_cell(computed_text(column.kind, grid.computed.get((student.id, key)))))
+            computed = grid.computed.get((student.id, key))
+            # Як student_ids_with_entries: оцінка «Зошита» чи ручне значення — запис; автоматичне — ні.
+            if computed is not None and (computed.is_manual or (column.kind == "notebook" and computed.value is not None)):
+                has_entry = True
+            cells.append(_to_cell(computed_text(column.kind, computed)))
+        if student.archived and not has_entry:
+            continue
         if student.archived:
             rows.append(ExportRow(None, f"{student.full_name} (вибув)", cells, archived=True))
         else:
