@@ -101,7 +101,8 @@ def computed_tooltip(kind: str, cell: ComputedCell | None) -> str | None:
     if kind == "thematic":
         if cell.auto_na:
             return "н/а — немає оцінок за тему"
-        return f"Середнє {_mean_text(cell.total, cell.count)} ({f"{cell.count} {plural(cell.count, 'оцінка', 'оцінки', 'оцінок')}"}) → {cell.auto}"
+        grades = f"{cell.count} {plural(cell.count, 'оцінка', 'оцінки', 'оцінок')}"
+        return f"Середнє {_mean_text(cell.total, cell.count)} ({grades}) → {cell.auto}"
     if kind == "semester":
         if cell.auto_na:
             if cell.count == 0:

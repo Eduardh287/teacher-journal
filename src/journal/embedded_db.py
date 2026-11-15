@@ -196,7 +196,7 @@ def resolve_layout(
 # ---------------------------------------------------------------- секрет і порт
 
 def generate_secret(length: int = SECRET_LENGTH) -> str:
-    return secrets.token_hex(length // 2)
+    return secrets.token_hex((length + 1) // 2)[:length]
 
 
 def secret_present(secret_file: Path) -> bool:

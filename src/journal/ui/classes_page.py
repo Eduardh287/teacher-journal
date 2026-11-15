@@ -39,12 +39,12 @@ from journal.ui.journal_dialogs import conflict_text
 from journal.ui.service_scope import service_scope
 from journal.ui.widgets import ElidedLabel, button, card, label
 
-def _students_text(n: int) -> str:
-    return f"{n} {plural(n, 'учень', 'учні', 'учнів')}"
-
-
 COLUMNS = 3  # кількість карток у рядку
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
+
+
+def _students_text(n: int) -> str:
+    return f"{n} {plural(n, 'учень', 'учні', 'учнів')}"
 
 
 class _ClassCard(QFrame):

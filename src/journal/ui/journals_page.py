@@ -1,7 +1,7 @@
 """Сторінка «Журнали»: список журналів (картки) і вигляд журналу з таблицею оцінок.
 
 UI працює лише з JournalApi (через api_factory) та його DTO. За замовчуванням кожен виклик —
-окрема транзакція journal.db.session_scope(). JournalError ловимо ПОЗА блоком with (відкат).
+окрема транзакція ui.service_scope. JournalError ловимо ПОЗА блоком with (відкат).
 """
 import logging
 from collections.abc import Callable

@@ -78,7 +78,9 @@ def test_repository_filters_one_student(session, world):
 
 def test_student_computed_matches_grid(session, world):
     svc, teacher, journal, students, _lessons = world
-    grid = svc.get_grid(teacher.id, journal.id, 1)
-    for student in students:
-        row = svc.student_computed(teacher.id, journal.id, student.id)
-        assert {k: v for (sid, k), v in grid.computed.items() if sid == student.id}.items() <= row.items()
+    for semester in (1, 2):
+        grid = svc.get_grid(teacher.id, journal.id, semester)
+        for student in students:
+            row = svc.student_computed(teacher.id, journal.id, student.id)
+            shown = {k: v for (sid, k), v in grid.computed.items() if sid == student.id}
+            assert shown and shown == {k: row[k] for k in shown}

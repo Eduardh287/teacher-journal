@@ -348,7 +348,11 @@ class BackupService:
     def rotate(self, directory: Path | None = None, keep: int = KEEP_AUTO) -> list[Path]:
         """Лишає `keep` найновіших автокопій; інші типи копій не чіпає."""
         directory = directory or self.effective_dir()
-        autos = sorted(directory.glob(f"journal_*_auto{BACKUP_SUFFIX}"), key=lambda p: p.name, reverse=True)
+        autos = sorted(
+            (p for p in directory.glob(f"journal_*_auto{BACKUP_SUFFIX}") if (parse_backup_name(p) or (None, ""))[1] == "auto"),
+            key=lambda p: p.name,
+            reverse=True,
+        )
         removed = []
         for old in autos[keep:]:
             old.unlink(missing_ok=True)
