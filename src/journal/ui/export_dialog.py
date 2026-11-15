@@ -4,7 +4,6 @@ UI працює лише з JournalApi та DTO сервісів; побудов
 Функції ask_period / choose_save_path / show_saved / show_failure / show_notice винесено окремо,
 щоб тести підміняли їх (без справжніх вікон і файлових діалогів).
 """
-import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import date
@@ -23,6 +22,7 @@ from journal.services.export_service import (
     suggest_file_name,
 )
 from journal.services.journal_types import JournalApi, JournalError, JournalInfo
+from journal.logging_setup import log_failure
 from journal.services.xlsx_writer import write_export
 from journal.ui import theme
 from journal.ui.settings_cards import open_folder
@@ -202,8 +202,8 @@ def export_journal(parent: QWidget | None, api_factory: ApiFactory, teacher_id: 
     except (ExportError, JournalError) as error:
         show_notice(parent, str(error))
         return None
-    except Exception as error:
-        logging.error("Помилка під час підготовки експорту: %s", type(error).__name__)
+    except Exception:
+        log_failure("Помилка під час підготовки експорту")
         show_failure(parent, GENERIC_EXPORT_ERROR)
         return None
     path = choose_save_path(parent, suggest_file_name(info, start, end))
@@ -214,8 +214,8 @@ def export_journal(parent: QWidget | None, api_factory: ApiFactory, teacher_id: 
     except ExportError as error:
         show_failure(parent, str(error))
         return None
-    except Exception as error:
-        logging.error("Помилка під час запису файлу експорту: %s", type(error).__name__)
+    except Exception:
+        log_failure("Помилка під час запису файлу експорту")
         show_failure(parent, GENERIC_EXPORT_ERROR)
         return None
     show_saved(parent, path)

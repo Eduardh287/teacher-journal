@@ -1,6 +1,6 @@
 [project]
 name = "teacher-journal"
-version = "0.1.0"
+version = "0.9.0"
 description = "Приватний електронний журнал викладача математики і фізики"
 requires-python = ">=3.12"
 

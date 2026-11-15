@@ -214,6 +214,7 @@ class BackupService:
         # маркер «відновлення триває»: у ньому шлях до копії «перед відновленням»
         self.marker_path = Path(marker_path) if marker_path else embedded_db.requested_root() / RESTORE_MARKER_NAME
         self._has_data = has_data or database_has_data
+        self.restore_copy_unavailable = False  # маркер є, але папка його копії недоступна
         self.fallback_used = False  # остання копія пішла в типову папку, бо обрана недоступна
 
     @classmethod
@@ -480,6 +481,7 @@ class BackupService:
 
         Якщо маркер є, а файл копії зник — пишемо в журнал і прибираємо маркер.
         """
+        self.restore_copy_unavailable = False
         try:
             if not self.marker_path.is_file():
                 return None
@@ -492,6 +494,7 @@ class BackupService:
             elif not target.parent.is_dir():
                 # папка недоступна (напр. знято флешку) — маркер лишаємо, спробуємо наступного разу
                 log.warning("Папка копії перед відновленням недоступна: %s", target.name)
+                self.restore_copy_unavailable = True
                 return None
             else:
                 log.error("Маркер відновлення вказує на відсутній файл: %s", target.name)

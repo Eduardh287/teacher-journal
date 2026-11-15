@@ -212,3 +212,20 @@ def test_startup_recovery_failure_does_not_block_start(monkeypatch):
     service = _Recoverable(Path("x.dump"), error=BackupError("Не вдалося повернути."))
     assert backup_dialogs.recover_interrupted_restore(lambda: service, ask=lambda p: True) is False
     assert messages[0][0] == "warn"
+
+
+class _Unavailable(_Recoverable):
+    restore_copy_unavailable = True
+
+
+def test_unavailable_copy_folder_is_reported_once(monkeypatch):
+    messages = _patch_messages(monkeypatch)
+    service = _Unavailable(None)
+    for _ in range(3):
+        assert backup_dialogs.recover_interrupted_restore(lambda: service, ask=lambda p: pytest.fail("no ask")) is False
+    assert [kind for kind, _ in messages] == ["warn"]
+    assert "недоступна" in messages[0][1]
+    # копія знову доступна -> прапорець скинуто, наступна недоступність знову повідомить
+    backup_dialogs.recover_interrupted_restore(lambda: _Recoverable(None), ask=lambda p: False)
+    backup_dialogs.recover_interrupted_restore(lambda: service, ask=lambda p: False)
+    assert [kind for kind, _ in messages] == ["warn", "warn"]

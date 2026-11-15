@@ -131,7 +131,7 @@ def test_bundled_mode(monkeypatch):
     assert e.is_bundled_mode()
 
 
-def test_init_cluster_keeps_password_off_command_line_and_removes_pwfile(tmp_path, monkeypatch):
+def test_init_cluster_keeps_password_off_command_line_and_removes_pwfile(tmp_path, monkeypatch, fake_ascii):
     layout = e.resolve_layout(tmp_path / "root")
     pg = tmp_path / "pg"
     (pg / "bin").mkdir(parents=True)
@@ -157,7 +157,7 @@ def test_init_cluster_keeps_password_off_command_line_and_removes_pwfile(tmp_pat
     assert not Path(seen["pwfile"]).exists()
 
 
-def test_initdb_failure_raises_without_leaking_password(tmp_path, monkeypatch):
+def test_initdb_failure_raises_without_leaking_password(tmp_path, monkeypatch, fake_ascii):
     layout = e.resolve_layout(tmp_path / "root")
     pg = tmp_path / "pg"
     (pg / "bin").mkdir(parents=True)
@@ -173,7 +173,7 @@ def test_initdb_failure_raises_without_leaking_password(tmp_path, monkeypatch):
     assert "SECRETSECRET" not in str(err.value)
 
 
-def test_missing_pgsql_dir_gives_clear_error(tmp_path):
+def test_missing_pgsql_dir_gives_clear_error(tmp_path, fake_ascii):
     layout = e.resolve_layout(tmp_path / "root")
     with pytest.raises(e.EmbeddedDbError):
         e.EmbeddedDb(layout, pg_root=tmp_path / "nope")
@@ -252,3 +252,259 @@ def test_failed_backup_blocks_migration(monkeypatch):
     monkeypatch.setattr(e, "script_head", lambda: "new")
     with pytest.raises(e.EmbeddedDbError, match="оновлення не виконано"):
         e.backup_before_migration("postgresql+psycopg://u:p@h/db")
+
+
+# ---------------------------------------------------------------- етап 8b
+
+@pytest.fixture
+def fake_pg(tmp_path, fake_ascii):
+    """Layout + каталог pgsql із фіктивним pg_ctl.exe (процеси не запускаються)."""
+    layout = e.resolve_layout(tmp_path / "root")
+    pg = tmp_path / "pg"
+    (pg / "bin").mkdir(parents=True)
+    (pg / "bin" / "pg_ctl.exe").write_text("")
+    return layout, pg
+
+
+class _R:
+    def __init__(self, returncode=0, stderr=""):
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+# E1: icacls за повним шляхом, збій -> EmbeddedDbError
+
+def test_icacls_uses_full_path_and_succeeds(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return _R(0)
+
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setattr(e.subprocess, "run", fake_run)
+    e._restrict_to_current_user(tmp_path)
+    assert seen["cmd"][0] == str(Path(r"C:\Windows") / "System32" / "icacls.exe")
+
+
+@pytest.mark.parametrize("outcome", [_R(5), OSError("no icacls"), e.subprocess.TimeoutExpired("icacls", 30)])
+def test_icacls_failure_fails_closed(monkeypatch, tmp_path, outcome):
+    def fake_run(cmd, **kw):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(e.subprocess, "run", fake_run)
+    with pytest.raises(e.EmbeddedDbError):
+        e._restrict_to_current_user(tmp_path)
+
+
+def test_fallback_layout_fails_when_icacls_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(e, "is_ascii", lambda p: "дані" not in str(p))
+    monkeypatch.setattr(e.subprocess, "run", lambda *a, **k: _R(1))
+    with pytest.raises(e.EmbeddedDbError):
+        e.resolve_layout(tmp_path / "дані", shorten=lambda p: p, fallback=tmp_path / "pd")
+
+
+# E3: помилки -> EmbeddedDbError
+
+def test_run_timeout_becomes_embedded_error(monkeypatch):
+    def boom(*a, **k):
+        raise e.subprocess.TimeoutExpired("x", 1)
+
+    monkeypatch.setattr(e.subprocess, "run", boom)
+    with pytest.raises(e.EmbeddedDbError):
+        e._run(["pg_ctl.exe", "status"])
+
+
+def test_psycopg_error_in_ensure_database_is_wrapped(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+
+    def boom(*a, **k):
+        raise psycopg.OperationalError("password authentication failed for user journal SECRET")
+
+    monkeypatch.setattr(psycopg, "connect", boom)
+    with pytest.raises(e.EmbeddedDbError) as err:
+        e.EmbeddedDb(layout, pg_root=pg).ensure_database("pw", 54329)
+    assert "SECRET" not in str(err.value)
+
+
+def test_alembic_error_is_wrapped(monkeypatch):
+    from alembic import command
+
+    def boom(*a, **k):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(command, "upgrade", boom)
+    with pytest.raises(e.EmbeddedDbError) as err:
+        e.upgrade_schema("postgresql+psycopg://u:p@h/db")
+    assert "secret detail" not in str(err.value)
+
+
+# E4: порожній db.secret при ініціалізованому кластері
+
+@pytest.mark.parametrize("content", [None, "", "  \n"])
+def test_missing_or_empty_secret_with_cluster_is_an_error(fake_pg, content):
+    layout, pg = fake_pg
+    layout.pgdata.mkdir()
+    (layout.pgdata / "PG_VERSION").write_text("17")
+    if content is not None:
+        layout.secret_file.write_text(content)
+    with pytest.raises(e.EmbeddedDbError, match="db.secret"):
+        e.EmbeddedDb(layout, pg_root=pg).ensure_running()
+    assert not layout.secret_file.exists() if content is None else layout.secret_file.read_text() == content
+
+
+def test_secret_present(tmp_path):
+    f = tmp_path / "s"
+    assert not e.secret_present(f)
+    f.write_text("")
+    assert not e.secret_present(f)
+    f.write_text("abc")
+    assert e.secret_present(f)
+
+
+# E5: pg_ctl start
+
+class _Pg:
+    """Збирає виклики subprocess.run і підміняє _run (status/stop)."""
+
+    def __init__(self, monkeypatch, start_code=0, status_codes=(3,)):
+        self.calls = []
+        self.status_codes = list(status_codes)
+        self.start_code = start_code
+
+        def fake_subprocess_run(cmd, **kw):
+            self.calls.append((cmd, kw))
+            if isinstance(self.start_code, BaseException):
+                raise self.start_code
+            return _R(self.start_code)
+
+        def fake_run(cmd, timeout=120, **kw):
+            self.calls.append((cmd, {"timeout": timeout}))
+            if "status" in cmd:
+                return _R(self.status_codes.pop(0) if len(self.status_codes) > 1 else self.status_codes[0])
+            return _R(0)
+
+        monkeypatch.setattr(e.subprocess, "run", fake_subprocess_run)
+        monkeypatch.setattr(e, "_run", fake_run)
+
+    def commands(self, word):
+        return [c for c, _ in self.calls if word in c]
+
+
+def test_start_timeout_is_60_seconds(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch)
+    port = e.EmbeddedDb(layout, pg_root=pg).start()
+    start_cmd = fake.commands("start")[0]
+    assert e.START_TIMEOUT_SEC == 60
+    assert start_cmd[start_cmd.index("-t") + 1] == "60"
+    assert 54329 <= port <= 54339
+
+
+def test_start_nonzero_but_status_running_is_ok(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    _Pg(monkeypatch, start_code=1, status_codes=(0,))
+    assert e.EmbeddedDb(layout, pg_root=pg).start()
+
+
+@pytest.mark.parametrize("start_code", [1, e.subprocess.TimeoutExpired("pg_ctl", 90)])
+def test_start_failure_with_server_down_raises(fake_pg, monkeypatch, start_code):
+    layout, pg = fake_pg
+    _Pg(monkeypatch, start_code=start_code, status_codes=(3,))
+    with pytest.raises(e.EmbeddedDbError):
+        e.EmbeddedDb(layout, pg_root=pg).start()
+
+
+# C: stop лише якщо запустили ми
+
+def _prepare_running(layout, monkeypatch, fake):
+    layout.secret_file.write_text("pw")
+    layout.pgdata.mkdir(exist_ok=True)
+    (layout.pgdata / "PG_VERSION").write_text("17")
+    monkeypatch.setattr(_EmbeddedDbClass, "ensure_database", lambda self, pw, port: None)
+
+
+def test_reused_server_is_not_stopped(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch, status_codes=(0,))
+    _prepare_running(layout, monkeypatch, fake)
+    (layout.pgdata / "postmaster.pid").write_text("1\nx\n0\n54331\n")
+    db = e.EmbeddedDb(layout, pg_root=pg)
+    url = db.ensure_running()
+    assert url.endswith(":54331/journal") and db.port == 54331
+    assert not db.started_by_us
+    db.stop()
+    assert fake.commands("stop") == []
+
+
+def test_started_server_is_stopped(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch, status_codes=(3,))
+    _prepare_running(layout, monkeypatch, fake)
+    db = e.EmbeddedDb(layout, pg_root=pg)
+    db.ensure_running()
+    assert db.started_by_us and db.url
+    db.stop()
+    assert len(fake.commands("stop")) == 1 and db.url is None and not db.started_by_us
+    db.stop()  # повторно — нічого
+    assert len(fake.commands("stop")) == 1
+
+
+_EmbeddedDbClass = e.EmbeddedDb
+
+
+def test_error_path_does_not_stop_a_foreign_server(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch, status_codes=(0,))
+    monkeypatch.setattr(e, "resolve_layout", lambda: layout)
+    monkeypatch.setattr(e, "EmbeddedDb", lambda lay: _EmbeddedDbClass(lay, pg_root=pg))
+    monkeypatch.setattr(e, "_instance", None)
+
+    def migration_fails(url):
+        raise e.EmbeddedDbError("x")
+
+    monkeypatch.setattr(e, "backup_before_migration", migration_fails)
+    _prepare_running(layout, monkeypatch, fake)
+    (layout.pgdata / "postmaster.pid").write_text("1\nx\n0\n54331\n")
+    with pytest.raises(e.EmbeddedDbError):
+        e.ensure_running()
+    assert fake.commands("stop") == []
+
+
+def test_force_stop_ignores_ownership(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch)
+    db = e.EmbeddedDb(layout, pg_root=pg)
+    assert not db.started_by_us
+    assert db.force_stop() is True
+    assert len(fake.commands("stop")) == 1
+
+
+def test_stop_server_for_installer(fake_pg, monkeypatch):
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch)
+    monkeypatch.setattr(e, "resolve_layout", lambda: layout)
+    monkeypatch.setattr(e, "pgsql_dir", lambda: pg)
+    assert e.stop_server_for_installer() is True  # кластера ще немає — нічого робити
+    assert fake.commands("stop") == []
+    layout.pgdata.mkdir()
+    (layout.pgdata / "PG_VERSION").write_text("17")
+    assert e.stop_server_for_installer() is True
+    assert len(fake.commands("stop")) == 1
+
+
+# running_port
+
+def test_running_port_reads_postmaster_pid_then_port_file(fake_pg):
+    layout, pg = fake_pg
+    db = e.EmbeddedDb(layout, pg_root=pg)
+    assert db.running_port() is None
+    layout.port_file.write_text("54335")
+    assert db.running_port() == 54335
+    layout.pgdata.mkdir()
+    (layout.pgdata / "postmaster.pid").write_text("123\nx\n0\n54337\n")
+    assert db.running_port() == 54337
+    (layout.pgdata / "postmaster.pid").write_text("junk")
+    assert db.running_port() == 54335

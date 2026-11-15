@@ -362,7 +362,7 @@ def test_marker_kept_when_copy_folder_unavailable(tmp_path):
     gone = tmp_path / "usb" / "journal_2026-01-01_00-00-00_before-restore.dump"
     service.marker_path.write_text(str(gone), encoding="utf-8")
     assert service.interrupted_restore_copy() is None
-    assert service.marker_path.exists()
+    assert service.marker_path.exists() and service.restore_copy_unavailable
 
 
 def test_before_restore_always_in_default_folder(tmp_path):

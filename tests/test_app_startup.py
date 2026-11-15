@@ -21,6 +21,12 @@ def wired(monkeypatch):
         def setApplicationName(self, name):
             pass
 
+        def setApplicationVersion(self, version):
+            pass
+
+        def setWindowIcon(self, icon):
+            pass
+
     class FakeAuth:
         def __init__(self, session):
             pass
@@ -44,6 +50,9 @@ def wired(monkeypatch):
     monkeypatch.setattr(app, "setup_logging", lambda: None)
     monkeypatch.setattr(app, "install_excepthook", lambda: None)
     monkeypatch.setattr(app, "QApplication", FakeApp)
+    monkeypatch.setattr(app, "app_icon", lambda: None)
+    monkeypatch.setattr(app.single_instance, "acquire", lambda root=None: object())
+    monkeypatch.setattr(app.single_instance, "create_app_mutex", lambda: None)
     monkeypatch.setattr(app, "apply_theme", lambda a, n: None)
     monkeypatch.setattr(app, "load_theme_name", lambda: "light")
     monkeypatch.setattr(app.embedded_db, "is_bundled_mode", lambda: True)

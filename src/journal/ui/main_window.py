@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from journal.services.auth_service import CurrentUser
+from journal.version import app_version
 from journal.ui import icons, theme
 from journal.ui.classes_page import ClassesPage
 from journal.ui.journals_page import JournalsPage
@@ -47,7 +48,7 @@ class MainWindow(QMainWindow):
         # Автокопія при закритті (етап 7a): передає app.py; у тестах за замовчуванням її немає.
         self._exit_backup = exit_backup
         self._exit_backup_done = False
-        self.setWindowTitle(f"Електронний журнал — {current_user.full_name}")
+        self.setWindowTitle(f"Електронний журнал {app_version()} — {current_user.full_name}")
         self.setMinimumSize(1100, 700)
 
         # Іконки малюються кольором поточної теми, тож при зміні теми їх треба перемалювати.
@@ -282,9 +283,9 @@ class MainWindow(QMainWindow):
             try:
                 self._exit_backup(self)
             except Exception:  # noqa: BLE001 — програма ніколи не мусить «застрягти» на виході
-                import logging
+                from journal.logging_setup import log_failure
 
-                logging.exception("Помилка автоматичної копії при виході")
+                log_failure("Помилка автоматичної копії при виході")
         super().closeEvent(event)
 
     # ---------- Тема ----------

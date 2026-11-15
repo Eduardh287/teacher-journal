@@ -27,6 +27,7 @@ from journal.services.semesters import (
 )
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError
 from journal.services.auth_service import AuthError
+from journal.logging_setup import log_failure
 from journal.ui import auth_dialogs, backup_dialogs
 from journal.ui.theme import app_settings
 from journal.ui.widgets import ElidedLabel, button, label
@@ -380,7 +381,7 @@ class BackupsCard(QFrame):
             backups = service.list_backups()
             folder = service.effective_dir()
         except Exception:
-            logging.exception("Не вдалося прочитати список резервних копій")
+            log_failure("Не вдалося прочитати список резервних копій")
             self.folder_label.setText("")
             self.latest_label.setText("Не вдалося прочитати список копій")
             self.fallback_note.hide()
@@ -410,7 +411,7 @@ class BackupsCard(QFrame):
             self._show_error(str(error))
             return
         except Exception:
-            logging.exception("Не вдалося створити резервну копію")
+            log_failure("Не вдалося створити резервну копію")
             self._show_error("Не вдалося створити резервну копію. Деталі — у журналі.")
             return
         text = f"Копію створено: {path.name}"
@@ -423,7 +424,7 @@ class BackupsCard(QFrame):
         try:
             folder = Path(self._service().effective_dir(create=True))
         except Exception:
-            logging.exception("Не вдалося відкрити папку копій")
+            log_failure("Не вдалося відкрити папку копій")
             self._show_error("Не вдалося відкрити папку копій.")
             return
         open_folder(folder)
@@ -444,7 +445,7 @@ class BackupsCard(QFrame):
             service = self._service()
             start = str(service.effective_dir())
         except Exception:
-            logging.exception("Не вдалося підготувати відновлення")
+            log_failure("Не вдалося підготувати відновлення")
             self._show_error("Не вдалося підготувати відновлення. Деталі — у журналі.")
             return
         chosen, _ = QFileDialog.getOpenFileName(
@@ -458,7 +459,7 @@ class BackupsCard(QFrame):
             self._show_error(str(error))
             return
         except Exception:
-            logging.exception("Не вдалося перевірити файл копії")
+            log_failure("Не вдалося перевірити файл копії")
             self._show_error("Не вдалося прочитати файл копії. Деталі — у журналі.")
             return
         if not backup_dialogs.confirm_restore(self, info):
@@ -474,7 +475,7 @@ class BackupsCard(QFrame):
             self._show_error(str(error))
             return
         except Exception:
-            logging.exception("Відновлення завершилось несподіваною помилкою")
+            log_failure("Відновлення завершилось несподіваною помилкою")
             self._show_error("Не вдалося відновити дані. Деталі — у журналі.")
             return
         backup_dialogs.show_info(
