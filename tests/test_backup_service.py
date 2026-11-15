@@ -13,6 +13,7 @@ from journal.services.backup_service import (
     BackupTooNewError,
     RestoreFailed,
     RunResult,
+    parse_backup_name,
 )
 
 PASSWORD = "S3cretPassw0rdXYZ"
@@ -140,6 +141,27 @@ def test_rotation_keeps_ten_newest_auto_only(tmp_path):
     assert len(autos) == 10
     assert autos[0].startswith("journal_2026-11-05")  # 3 найстарші видалено
     assert all(p.exists() for p in other)
+
+
+def test_rotation_ignores_foreign_names(tmp_path):
+    clock = Clock()
+    service, _ = make(tmp_path, now=clock)
+    folder = tmp_path / "default"
+    folder.mkdir()
+    foreign = [
+        folder / "journal_x_auto.dump",
+        folder / "journal_2026-01-01_00-00-00_manual_auto.dump",
+        folder / "JOURNAL_2026-01-01_00-00-00_AUTO.DUMP",
+    ]
+    for path in foreign:
+        path.write_bytes(b"x")
+    clock.value = datetime(2026, 11, 1, 8, 0, 0)
+    for _ in range(12):
+        clock.value += timedelta(days=1)
+        service.create_backup("auto")
+    real = [p for p in folder.iterdir() if parse_backup_name(p) and parse_backup_name(p)[1] == "auto"]
+    assert len(real) == 10
+    assert all(p.exists() for p in foreign)
 
 
 def test_custom_folder_used_when_available(tmp_path):

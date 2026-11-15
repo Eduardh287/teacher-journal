@@ -1,18 +1,20 @@
 """Перехід на новий навчальний рік: вікно підтвердження і запуск після відкриття головного вікна.
 
 UI працює з RolloverService лише через service_factory (за замовчуванням — окрема транзакція
-journal.db.session_scope()). Специфікація: docs/specs/stage-5.2.md.
+ui.service_scope). Специфікація: docs/specs/stage-5.2.md.
 """
 import logging
 from collections.abc import Callable
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager
+from functools import partial
 from datetime import date
 from typing import Any, Protocol
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
 
-from journal.db import session_scope
-from journal.services.rollover_service import RolloverItem
+from journal.services.grid_text import plural
+from journal.services.rollover_service import RolloverItem, RolloverService
+from journal.ui.service_scope import service_scope
 from journal.ui.widgets import button, label
 
 ERROR_TEXT = "Не вдалося виконати перехід на новий навчальний рік. Спробуйте пізніше."
@@ -28,24 +30,6 @@ class RolloverApi(Protocol):
 ServiceFactory = Callable[[], AbstractContextManager[RolloverApi]]
 
 
-@contextmanager
-def default_service_factory():
-    """Відкриває транзакцію й віддає сервіс переходу (імпорт відкладений)."""
-    from journal.services.rollover_service import RolloverService
-
-    with session_scope() as session:
-        yield RolloverService(session)
-
-
-def years_word(count: int) -> str:
-    """«1 рік», «2 роки», «5 років», «11 років», «21 рік»."""
-    if count % 10 == 1 and count % 100 != 11:
-        return f"{count} рік"
-    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
-        return f"{count} роки"
-    return f"{count} років"
-
-
 def item_text(item: RolloverItem) -> str:
     """«9-А → 10-А (2027-2028), учнів: 28», «9-Б → архів (10-Б уже існує)», «11-Б → архів»;
     за пропущені роки: «9-А (2024-2025) → 11-А (2026-2027) · пропущено 1 рік»."""
@@ -53,7 +37,7 @@ def item_text(item: RolloverItem) -> str:
     if item.action == "promote" and skipped > 0 and not item.target_exists:
         return (
             f"{item.class_name} ({item.school_year}) → {item.new_name} ({item.new_year})"
-            f" · пропущено {years_word(skipped)}"
+            f" · пропущено {skipped} {plural(skipped, 'рік', 'роки', 'років')}"
         )
     if item.action == "promote":
         if item.target_exists:
@@ -121,7 +105,7 @@ def maybe_run_rollover(
 ) -> bool:
     """Пропонує перехід на новий рік, якщо він потрібен. Повертає True, якщо перехід виконано."""
     today = today or date.today()
-    factory = service_factory or default_service_factory
+    factory = service_factory or partial(service_scope, RolloverService)
     try:
         with factory() as service:
             items = service.plan(teacher_id, today)

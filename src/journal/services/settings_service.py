@@ -1,7 +1,7 @@
 """Налаштування викладача: межі семестрів (етап 5.2, docs/specs/stage-5.2.md)."""
 from sqlalchemy.orm import Session
 
-from journal.models import Journal, Teacher
+from journal.models import ExtraColumn, Journal, Lesson, Teacher
 from journal.repositories.journal_repository import JournalRepository
 from journal.services.boundaries_rows import boundaries_of, set_boundaries
 from journal.services.journal_types import JournalError, LessonConflict, SemesterConflict
@@ -18,47 +18,24 @@ def apply_boundaries(
     кидає SemesterConflict (уроки впорядковані за роком, класом, предметом і датою).
     Повертає кількість оновлених журналів.
     """
-    lessons = repo.lessons_of_journals([j.id for j in journals])
     by_journal = {j.id: j for j in journals}
+    ids = list(by_journal)
+    # Extra-стовпчики (тематична, зошит) теж прив'язані до дати: after_date завжди дорівнює даті
+    # уроку-якоря (сервіс синхронізує її при створенні, перенесенні, зміні дати й видаленні якоря).
+    dated = [(lesson, lesson.journal_id, lesson.lesson_date) for lesson in repo.lessons_of_journals(ids)]
+    dated += [(column, column.journal_id, column.after_date) for column in repo.extra_columns_of_journals(ids)]
     conflicts: list[LessonConflict] = []
-    new_semesters: dict[int, int] = {}
-    for lesson in lessons:
-        journal = by_journal[lesson.journal_id]
+    new_semesters: list[tuple[Lesson | ExtraColumn, int]] = []
+    for item, journal_id, day in dated:
+        journal = by_journal[journal_id]
         school_class = journal.school_class
-        semester = boundaries.semester_of_month(lesson.lesson_date.month)
-        if semester is None or not boundaries.contains(school_class.school_year, lesson.lesson_date):
+        semester = boundaries.semester_of_month(day.month)
+        if semester is None or not boundaries.contains(school_class.school_year, day):
             conflicts.append(
-                LessonConflict(
-                    journal.id,
-                    school_class.name,
-                    school_class.school_year,
-                    journal.subject.name,
-                    lesson.lesson_date,
-                )
+                LessonConflict(journal.id, school_class.name, school_class.school_year, journal.subject.name, day)
             )
         else:
-            new_semesters[lesson.id] = semester
-    # Extra-стовпчики (тематична, зошит) теж прив'язані до дати: їхній семестр перераховується.
-    # after_date завжди дорівнює даті уроку-якоря (сервіс синхронізує її при створенні, перенесенні,
-    # зміні дати й видаленні якоря), тож межі перевіряються за датою якоря.
-    columns = repo.extra_columns_of_journals([j.id for j in journals])
-    new_column_semesters: dict[int, int] = {}
-    for column in columns:
-        journal = by_journal[column.journal_id]
-        school_class = journal.school_class
-        semester = boundaries.semester_of_month(column.after_date.month)
-        if semester is None or not boundaries.contains(school_class.school_year, column.after_date):
-            conflicts.append(
-                LessonConflict(
-                    journal.id,
-                    school_class.name,
-                    school_class.school_year,
-                    journal.subject.name,
-                    column.after_date,
-                )
-            )
-        else:
-            new_column_semesters[column.id] = semester
+            new_semesters.append((item, semester))
     if conflicts:
         conflicts.sort(
             key=lambda c: (
@@ -69,10 +46,8 @@ def apply_boundaries(
             )
         )
         raise SemesterConflict(conflicts)
-    for lesson in lessons:
-        lesson.semester = new_semesters[lesson.id]
-    for column in columns:
-        column.semester = new_column_semesters[column.id]
+    for item, semester in new_semesters:
+        item.semester = semester
     for journal in journals:
         set_boundaries(journal, boundaries)
     repo.session.flush()

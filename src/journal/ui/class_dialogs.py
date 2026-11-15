@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.db import session_scope
 from journal.services.class_service import (
     MAX_CLASS_NAME,
     MAX_STUDENT_NAME,
@@ -28,6 +27,8 @@ from journal.services.class_service import (
     default_school_year,
     school_year_choices,
 )
+from journal.services.grid_text import plural
+from journal.ui.service_scope import service_scope
 from journal.ui.widgets import button, field, label
 
 SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
@@ -67,8 +68,8 @@ class _ClassDialogBase(QDialog):
         """
         self.clear_error()
         try:
-            with session_scope() as session:
-                result = action(ClassService(session))
+            with service_scope(ClassService) as service:
+                result = action(service)
         except ClassError as error:
             self.show_error(str(error))
             return False, None
@@ -277,18 +278,7 @@ class ImportStudentsDialog(_ClassDialogBase):
         QMessageBox.information(
             self,
             "Імпорт завершено",
-            f"Додано {result.added} {_students_word(result.added)}. "
+            f"Додано {result.added} {plural(result.added, 'учня', 'учні', 'учнів')}. "
             f"Пропущено дублікатів: {result.skipped_duplicates}.",
         )
         self.accept()
-
-
-def _students_word(n: int) -> str:
-    """Форма слова «учень» після числівника: 1 учня, 3 і 34 учні, 5 і 12 учнів."""
-    if n % 100 in (11, 12, 13, 14):
-        return "учнів"
-    if n % 10 == 1:
-        return "учня"
-    if n % 10 in (2, 3, 4):
-        return "учні"
-    return "учнів"

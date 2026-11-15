@@ -1,11 +1,12 @@
 """Сторінка «Журнали»: список журналів (картки) і вигляд журналу з таблицею оцінок.
 
 UI працює лише з JournalApi (через api_factory) та його DTO. За замовчуванням кожен виклик —
-окрема транзакція journal.db.session_scope(). JournalError ловимо ПОЗА блоком with (відкат).
+окрема транзакція ui.service_scope. JournalError ловимо ПОЗА блоком with (відкат).
 """
 import logging
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from functools import partial
 from datetime import date
 from typing import Any
 
@@ -29,8 +30,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.db import session_scope
 from journal.services.auth_service import CurrentUser
+from journal.services.grid_text import plural
+from journal.services.journal_service import JournalService
 from journal.services.journal_types import (
     AttendanceCode,
     CellInfo,
@@ -49,6 +51,7 @@ from journal.ui import export_dialog, icons, theme
 from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialog, LessonDialog, NewJournalDialog
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
+from journal.ui.service_scope import service_scope
 from journal.ui.widgets import ElidedLabel, button, card, label
 
 COLUMNS = 3  # кількість карток у рядку
@@ -60,26 +63,7 @@ GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробу�
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
 
-@contextmanager
-def default_api_factory() -> Iterator[JournalApi]:
-    """Відкриває транзакцію й віддає сервіс журналів (імпорт відкладений — сервіс пишеться окремо)."""
-    from journal.services.journal_service import JournalService
-
-    with session_scope() as session:
-        yield JournalService(session)
-
-
-def lessons_text(n: int) -> str:
-    """«1 урок», «2 уроки», «5 уроків», «11 уроків»."""
-    if n % 100 in (11, 12, 13, 14):
-        word = "уроків"
-    elif n % 10 == 1:
-        word = "урок"
-    elif n % 10 in (2, 3, 4):
-        word = "уроки"
-    else:
-        word = "уроків"
-    return f"{n} {word}"
+default_api_factory: ApiFactory = partial(service_scope, JournalService)
 
 
 class _JournalCard(QFrame):
@@ -104,7 +88,7 @@ class _JournalCard(QFrame):
         layout.addLayout(top)
         layout.addWidget(label(info.school_year, muted=True))
         layout.addStretch(1)
-        layout.addWidget(label(lessons_text(info.lesson_count)))
+        layout.addWidget(label(f"{info.lesson_count} {plural(info.lesson_count, 'урок', 'уроки', 'уроків')}"))
         for child in self.findChildren(QLabel):
             if isinstance(child, ElidedLabel):
                 continue  # підказка потрібна самій мітці

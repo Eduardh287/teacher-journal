@@ -26,6 +26,7 @@ from journal.services.grid_text import (  # noqa: F401 (cell_text, computed_text
     NA_TEXT,
     cell_text,
     computed_text,
+    plural,
 )
 from journal.services.journal_types import (
     AttendanceCode,
@@ -80,19 +81,6 @@ SaveCell = Callable[[int, int, AttendanceCode, "int | None", "str | None"], "tup
 SaveOverride = Callable[[int, ComputedKey, "int | None", bool], "tuple[bool, dict[ComputedKey, ComputedCell] | None]"]
 
 
-def grades_text(n: int) -> str:
-    """«1 оцінка», «2 оцінки», «5 оцінок»."""
-    if n % 100 in (11, 12, 13, 14):
-        word = "оцінок"
-    elif n % 10 == 1:
-        word = "оцінка"
-    elif n % 10 in (2, 3, 4):
-        word = "оцінки"
-    else:
-        word = "оцінок"
-    return f"{n} {word}"
-
-
 def _mean_text(total: int, count: int) -> str:
     return f"{total / count:.2f}".replace(".", ",") if count else "—"
 
@@ -113,7 +101,8 @@ def computed_tooltip(kind: str, cell: ComputedCell | None) -> str | None:
     if kind == "thematic":
         if cell.auto_na:
             return "н/а — немає оцінок за тему"
-        return f"Середнє {_mean_text(cell.total, cell.count)} ({grades_text(cell.count)}) → {cell.auto}"
+        grades = f"{cell.count} {plural(cell.count, 'оцінка', 'оцінки', 'оцінок')}"
+        return f"Середнє {_mean_text(cell.total, cell.count)} ({grades}) → {cell.auto}"
     if kind == "semester":
         if cell.auto_na:
             if cell.count == 0:
@@ -142,6 +131,7 @@ class JournalGridModel(QAbstractTableModel):
         super().__init__(parent)
         self.students: list[StudentInfo] = []
         self.lessons: list[LessonInfo] = []
+        self._lessons_by_id: dict[int, LessonInfo] = {}
         self.columns: list[GridColumn] = []
         self.extras: dict[int, ExtraColumnInfo] = {}
         self.semester = 1
@@ -153,6 +143,7 @@ class JournalGridModel(QAbstractTableModel):
         self.beginResetModel()
         self.students = list(grid.students)
         self.lessons = list(grid.lessons)
+        self._lessons_by_id = {lesson.id: lesson for lesson in grid.lessons}
         self.columns = list(grid.columns) or [GridColumn("lesson", lesson.id) for lesson in grid.lessons]
         self.extras = {e.id: e for e in grid.extra_columns}
         self.semester = grid.semester
@@ -176,7 +167,7 @@ class JournalGridModel(QAbstractTableModel):
         """Урок стовпця (None для «Тем»/«Зош»/підсумкових)."""
         if not 0 <= column < len(self.columns) or self.columns[column].kind != "lesson":
             return None
-        return next((x for x in self.lessons if x.id == self.columns[column].id), None)
+        return self._lessons_by_id.get(self.columns[column].id)
 
     def computed_key(self, column: int) -> ComputedKey | None:
         col = self.columns[column]
@@ -193,10 +184,10 @@ class JournalGridModel(QAbstractTableModel):
         return None if key is None else self.computed.get((self.students[row].id, key))
 
     def cell(self, row: int, column: int) -> CellInfo:
-        lesson = self.lesson_at(column)
-        if lesson is None:
+        col = self.columns[column]
+        if col.kind != "lesson":
             return EMPTY_CELL
-        return self.cells.get((self.students[row].id, lesson.id), EMPTY_CELL)
+        return self.cells.get((self.students[row].id, col.id), EMPTY_CELL)
 
     def apply_computed(
         self, student_id: int, result: dict[ComputedKey, ComputedCell] | None, edited: ComputedKey | None = None

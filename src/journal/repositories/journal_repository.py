@@ -1,6 +1,6 @@
 """Доступ до журналів, уроків і клітинок. Лише запити — без бізнес-правил."""
-from sqlalchemy import delete, exists, func, select, union
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, exists, func, select
+from sqlalchemy.orm import Session, joinedload
 
 from journal.models import (
     ExtraColumn,
@@ -51,7 +51,9 @@ class JournalRepository:
         return list(self.session.scalars(query))
 
     def get_journal(self, journal_id: int) -> Journal | None:
-        return self.session.get(Journal, journal_id)
+        return self.session.get(
+            Journal, journal_id, options=[joinedload(Journal.school_class), joinedload(Journal.subject)]
+        )
 
     def get_class(self, class_id: int) -> SchoolClass | None:
         return self.session.get(SchoolClass, class_id)
@@ -118,33 +120,27 @@ class JournalRepository:
         )
         return {lesson_id: count for lesson_id, count in rows}
 
-    def entries(self, lesson_ids: list[int]) -> list[LessonEntry]:
+    def entries(self, lesson_ids: list[int], student_id: int | None = None) -> list[LessonEntry]:
+        """Відмітки уроків; з student_id — лише одного учня (перерахунок його рядка)."""
         if not lesson_ids:
             return []
-        return list(
-            self.session.scalars(select(LessonEntry).where(LessonEntry.lesson_id.in_(lesson_ids)))
-        )
+        query = select(LessonEntry).where(LessonEntry.lesson_id.in_(lesson_ids))
+        if student_id is not None:
+            query = query.where(LessonEntry.student_id == student_id)
+        return list(self.session.scalars(query))
 
     def entry_count(self, lesson_id: int) -> int:
         return self.session.scalar(
             select(func.count()).select_from(LessonEntry).where(LessonEntry.lesson_id == lesson_id)
         )
 
-    def withdrawn_with_entries(self, lesson_id: int) -> list[str]:
-        """Імена вибулих учнів, що мають відмітки в цьому уроці (для пояснення відмови)."""
+    def withdrawn_with(self, model, owner_column, owner_id: int) -> list[str]:
+        """Імена вибулих учнів, що мають рядки model (відмітки уроку чи оцінки стовпчика) для owner_column == owner_id —
+        для пояснення відмови видалити."""
         return list(self.session.scalars(
             select(Student.full_name)
-            .join(LessonEntry, LessonEntry.student_id == Student.id)
-            .where(LessonEntry.lesson_id == lesson_id, Student.archived.is_(True))
-            .order_by(Student.full_name)
-        ))
-
-    def withdrawn_with_extra_grades(self, column_id: int) -> list[str]:
-        """Імена вибулих учнів з оцінками в стовпчику «Зошит»/«Тематична»."""
-        return list(self.session.scalars(
-            select(Student.full_name)
-            .join(ExtraGrade, ExtraGrade.student_id == Student.id)
-            .where(ExtraGrade.column_id == column_id, Student.archived.is_(True))
+            .join(model, model.student_id == Student.id)
+            .where(owner_column == owner_id, Student.archived.is_(True))
             .order_by(Student.full_name)
         ))
 
@@ -158,21 +154,6 @@ class JournalRepository:
 
     def students(self, class_id: int) -> list[Student]:
         return list(self.session.scalars(select(Student).where(Student.class_id == class_id)))
-
-    def student_ids_with_entries(self, journal_id: int) -> set[int]:
-        """Учні, які мають у цьому журналі клітинку, оцінку extra-стовпчика чи ручну підсумкову."""
-        rows = self.session.scalars(
-            union(
-                select(LessonEntry.student_id)
-                .join(Lesson, Lesson.id == LessonEntry.lesson_id)
-                .where(Lesson.journal_id == journal_id),
-                select(ExtraGrade.student_id)
-                .join(ExtraColumn, ExtraColumn.id == ExtraGrade.column_id)
-                .where(ExtraColumn.journal_id == journal_id),
-                select(FinalGrade.student_id).where(FinalGrade.journal_id == journal_id),
-            )
-        )
-        return set(rows)
 
     # --- стовпчики без дати, підсумкові оцінки (етап 6) ---
 
@@ -220,14 +201,15 @@ class JournalRepository:
             )
         )
 
-    def extra_grades(self, journal_id: int) -> list[ExtraGrade]:
-        return list(
-            self.session.scalars(
-                select(ExtraGrade)
-                .join(ExtraColumn, ExtraColumn.id == ExtraGrade.column_id)
-                .where(ExtraColumn.journal_id == journal_id)
-            )
+    def extra_grades(self, journal_id: int, student_id: int | None = None) -> list[ExtraGrade]:
+        query = (
+            select(ExtraGrade)
+            .join(ExtraColumn, ExtraColumn.id == ExtraGrade.column_id)
+            .where(ExtraColumn.journal_id == journal_id)
         )
+        if student_id is not None:
+            query = query.where(ExtraGrade.student_id == student_id)
+        return list(self.session.scalars(query))
 
     def extra_grade_counts(self, journal_id: int) -> dict[int, int]:
         rows = self.session.execute(
@@ -241,8 +223,11 @@ class JournalRepository:
     def get_extra_grade(self, column_id: int, student_id: int) -> ExtraGrade | None:
         return self.session.get(ExtraGrade, (column_id, student_id))
 
-    def final_grades(self, journal_id: int) -> list[FinalGrade]:
-        return list(self.session.scalars(select(FinalGrade).where(FinalGrade.journal_id == journal_id)))
+    def final_grades(self, journal_id: int, student_id: int | None = None) -> list[FinalGrade]:
+        query = select(FinalGrade).where(FinalGrade.journal_id == journal_id)
+        if student_id is not None:
+            query = query.where(FinalGrade.student_id == student_id)
+        return list(self.session.scalars(query))
 
     def get_final_grade(self, journal_id: int, student_id: int, kind) -> FinalGrade | None:
         return self.session.get(FinalGrade, (journal_id, student_id, kind))

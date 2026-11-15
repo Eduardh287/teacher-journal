@@ -25,12 +25,8 @@ from journal import embedded_db
 
 log = logging.getLogger(__name__)
 
-KINDS = ("auto", "manual", "before-restore", "before-migration")
 KEEP_AUTO = 10
 BACKUP_SUFFIX = ".dump"
-_NAME_RE = re.compile(
-    r"^journal_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(auto|manual|before-restore|before-migration)\.dump$"
-)
 _TIME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 _COPY_HEADER = re.compile(r"^COPY\s+\S*alembic_version\b.*FROM stdin;\s*$", re.IGNORECASE)
 TOOL_TIMEOUT_SEC = 600
@@ -45,6 +41,8 @@ KIND_TITLES = {
     "before-restore": "перед відновленням",
     "before-migration": "перед оновленням бази",
 }
+KINDS = tuple(KIND_TITLES)
+_NAME_RE = re.compile(r"^journal_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(" + "|".join(KINDS) + r")\.dump$")
 
 
 class BackupError(RuntimeError):
@@ -333,15 +331,12 @@ class BackupService:
                 raise BackupError("Не вдалося створити резервну копію. Деталі — у журналі.")
             os.replace(part, final)
         except BackupError:
-            part.unlink(missing_ok=True)
             raise
         except OSError:
-            part.unlink(missing_ok=True)
             log.error("Не вдалося записати файл копії", exc_info=True)
             raise BackupError("Не вдалося записати файл резервної копії. Перевірте вільне місце.") from None
-        except BaseException:
-            part.unlink(missing_ok=True)
-            raise
+        finally:
+            part.unlink(missing_ok=True)  # після успішного os.replace файлу вже немає
         log.info("Резервна копія створена: тип=%s, файл=%s", kind, final.name)
         if kind == "auto":
             try:
@@ -354,7 +349,7 @@ class BackupService:
         """Лишає `keep` найновіших автокопій; інші типи копій не чіпає."""
         directory = directory or self.effective_dir()
         autos = sorted(
-            (p for p in directory.glob(f"*{BACKUP_SUFFIX}") if (parse_backup_name(p) or (0, ""))[1] == "auto"),
+            (p for p in directory.glob(f"journal_*_auto{BACKUP_SUFFIX}") if (parse_backup_name(p) or (None, ""))[1] == "auto"),
             key=lambda p: p.name,
             reverse=True,
         )

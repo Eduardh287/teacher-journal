@@ -5,7 +5,7 @@ from contextlib import AbstractContextManager
 from datetime import date
 from typing import Any
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QTextCharFormat
 from PySide6.QtWidgets import (
     QComboBox,
@@ -182,7 +182,7 @@ class LessonDialog(_ApiDialog):
             self.date_edit.calendarWidget().setWeekdayTextFormat(day, weekend)
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         start = lesson.lesson_date if lesson else date.today()
-        self.date_edit.setDate(QDate(start.year, start.month, start.day))
+        self.date_edit.setDate(start)
 
         self.type_combo = QComboBox()
         for code, (name, _abbr) in LESSON_TYPES.items():
@@ -273,8 +273,7 @@ class LessonDialog(_ApiDialog):
         if self.lesson is None and self.is_dateless():
             self._submit_column(self.type_combo.currentData())
             return
-        qd = self.date_edit.date()
-        lesson_date = date(qd.year(), qd.month(), qd.day())
+        lesson_date = self.date_edit.date().toPython()
         lesson_type: LessonTypeCode = self.type_combo.currentData()
         topic = self.topic_edit.text()
         homework = self.homework_edit.toPlainText().strip()

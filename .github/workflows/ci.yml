@@ -20,7 +20,7 @@ jobs:
   test:
     # The app is Windows-only (PySide6 UI, Windows paths), so the tests run on Windows.
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4

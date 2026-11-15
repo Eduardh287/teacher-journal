@@ -19,9 +19,9 @@ from journal.services.class_service import (
     ClassError,
     ClassService,
     ImportResult,
+    _parse_lines,
     default_school_year,
     normalize_name,
-    parse_student_list,
     school_year_choices,
 )
 from journal.services.ua_sort import ukrainian_sort_key
@@ -265,6 +265,10 @@ def test_sort_key_space_before_letters():
 
 
 # ---------- розбір списку ----------
+
+
+def parse_student_list(text):
+    return [name for _, name in _parse_lines(text)]
 
 
 def test_parse_student_list_numbering():

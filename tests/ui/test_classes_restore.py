@@ -8,6 +8,7 @@ from journal.services.auth_service import CurrentUser
 from journal.services.class_service import ClassInfo
 from journal.services.journal_types import LessonConflict, SemesterConflict
 from journal.ui import classes_page
+from journal.ui import service_scope as service_scope_module
 
 
 def test_restore_conflict_shows_lessons_not_generic_error(qtbot, monkeypatch):
@@ -29,7 +30,7 @@ def test_restore_conflict_shows_lessons_not_generic_error(qtbot, monkeypatch):
     def fake_scope():
         yield None
 
-    monkeypatch.setattr(classes_page, "session_scope", fake_scope)
+    monkeypatch.setattr(service_scope_module, "session_scope", fake_scope)
     monkeypatch.setattr(classes_page, "ClassService", FakeClassService)
     shown = []
     monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: shown.append((title, text)))

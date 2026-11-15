@@ -10,6 +10,7 @@
 Паролі, коди й хеші ніколи не потрапляють у журнал.
 """
 import logging
+import math
 import re
 import secrets
 from collections.abc import Callable
@@ -82,7 +83,7 @@ class AuthLocked(AuthError):
 def locked_message(seconds: int) -> str:
     seconds = max(1, int(seconds))
     if seconds >= 60:
-        left = f"{-(-seconds // 60)} хв."
+        left = f"{math.ceil(seconds / 60)} хв."
     else:
         left = f"{seconds} с."
     return f"Забагато невдалих спроб. Спробуйте через {left}"
@@ -156,7 +157,7 @@ class AuthService:
             return
         remaining = (until - self._clock()).total_seconds()
         if remaining > 0:
-            raise AuthLocked(int(-(-remaining // 1)))
+            raise AuthLocked(math.ceil(remaining))
 
     def _register_failure(self, state: _Throttle | Teacher, username: str) -> None:
         state.failed_attempts = (state.failed_attempts or 0) + 1

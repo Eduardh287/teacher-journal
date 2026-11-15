@@ -7,6 +7,15 @@ from journal.services.journal_types import CellInfo, ComputedCell
 
 NA_TEXT = "н/а"
 
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Форма слова після числа: plural(1, "урок", "уроки", "уроків") -> "урок"; 2 -> "уроки"; 5, 11 -> "уроків"."""
+    if n % 100 in (11, 12, 13, 14):
+        return many
+    if n % 10 == 1:
+        return one
+    return few if n % 10 in (2, 3, 4) else many
+
 # Тип уроку: код -> (назва, скорочення в заголовку стовпця)
 LESSON_TYPES: dict[str, tuple[str, str]] = {
     "regular": ("Звичайний урок", ""),

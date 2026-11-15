@@ -6,8 +6,8 @@ from PySide6.QtCore import QEvent, QPoint
 from PySide6.QtGui import QHelpEvent
 from PySide6.QtWidgets import QApplication
 
+from journal.services.grid_text import plural
 from journal.ui import theme
-from journal.ui.class_dialogs import _students_word
 from journal.ui.widgets import ElidedLabel
 
 
@@ -75,7 +75,7 @@ def test_control_border_contrast(name, fg, bg):
      (21, "учня"), (22, "учні"), (34, "учні"), (100, "учнів")],
 )
 def test_students_word(n, expected):
-    assert _students_word(n) == expected
+    assert plural(n, "учня", "учні", "учнів") == expected
 
 
 def _tooltip(widget):

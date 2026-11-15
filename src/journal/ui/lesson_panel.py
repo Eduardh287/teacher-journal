@@ -280,7 +280,7 @@ class LessonPanel(QWidget):
     def _fill_separator_row(self, row: int, column: ExtraColumnInfo, muted: QBrush) -> None:
         name = EXTRA_COLUMN_TYPES[column.kind][0]
         tint = {"thematic": "col_thematic_soft", "notebook": "col_notebook_soft"}.get(column.kind)
-        tip = f"{name} {column.ordinal}" + ("\nПравий клік — перемістити або видалити")
+        tip = f"{name} {column.ordinal}\nПравий клік — перемістити або видалити"
         for index in range(4):
             item = QTableWidgetItem(name if index == 0 else "")
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # без виділення й без № та дати

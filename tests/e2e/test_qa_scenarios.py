@@ -1230,12 +1230,11 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
     dlg.close()
 
     # --- діалоги з введенням слова: за замовчуванням «Скасувати» — Enter навіть після слова нічого не видаляє ---
-    for make in (lambda: DeleteJournalDialog(journal_info, 3),):
-        dlg = show_dialog(make(), qtbot)
-        dlg.confirm_edit.setText("видалити")
-        assert dlg.delete_button.isEnabled()
-        QTest.keyClick(dlg.confirm_edit, ENTER)
-        assert dlg.result() == 0 and not dlg.isVisible(), "Enter у діалозі видалення має скасовувати"
+    dlg = show_dialog(DeleteJournalDialog(journal_info, 3), qtbot)
+    dlg.confirm_edit.setText("видалити")
+    assert dlg.delete_button.isEnabled()
+    QTest.keyClick(dlg.confirm_edit, ENTER)
+    assert dlg.result() == 0 and not dlg.isVisible(), "Enter у діалозі видалення має скасовувати"
 
     # --- підтвердження QMessageBox: «Скасувати» за замовчуванням, Enter і Esc → False ---
     for page in (classes, journals):
