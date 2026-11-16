@@ -1,5 +1,4 @@
 """Картки сторінки «Налаштування»: межі семестрів і довідник предметів (етап 5.2)."""
-import logging
 import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -16,16 +15,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from journal.logging_setup import log_failure
+from journal.services.auth_service import AuthError
 from journal.services.journal_types import JournalError, SemesterConflict
 from journal.services.semesters import DEFAULT_BOUNDARIES, SemesterBoundaries, SemesterError
 from journal.services.settings_service import SettingsService
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError, SubjectService
-from journal.services.auth_service import AuthError
-from journal.logging_setup import log_failure
 from journal.ui import auth_dialogs, backup_dialogs
+from journal.ui.semester_widgets import SemesterBoundsEditor, conflict_text
 from journal.ui.service_scope import service_scope
 from journal.ui.theme import app_settings
-from journal.ui.widgets import ElidedLabel, SemesterBoundsEditor, SettingsCard, button, conflict_text, label
+from journal.ui.widgets import ElidedLabel, SettingsCard, button, label
 
 GENERIC_ERROR = "Не вдалося зберегти зміни"
 
@@ -68,7 +68,7 @@ class SemestersCard(SettingsCard):
             with self._factory() as service:
                 loaded = service.get_semesters(self.teacher_id)
         except Exception:
-            logging.exception("Не вдалося завантажити межі семестрів")
+            log_failure("Не вдалося завантажити межі семестрів")
             self.show_error("Не вдалося завантажити налаштування семестрів")
             return
         self._loaded = loaded
@@ -90,7 +90,7 @@ class SemestersCard(SettingsCard):
             self.show_error(str(error))
             return
         except Exception:
-            logging.exception("Не вдалося зберегти межі семестрів")
+            log_failure("Не вдалося зберегти межі семестрів")
             self.show_error(GENERIC_ERROR)
             return
         self._loaded = chosen
@@ -133,7 +133,7 @@ class SubjectsCard(SettingsCard):
             with self._factory() as service:
                 subjects = service.list_subjects()
         except Exception:
-            logging.exception("Не вдалося завантажити предмети")
+            log_failure("Не вдалося завантажити предмети")
             self.subjects_label.setText("Не вдалося завантажити список предметів")
             return
         self.subjects_label.setText(" · ".join(s.name for s in subjects))
@@ -146,7 +146,7 @@ class SubjectsCard(SettingsCard):
             self.show_error(str(error))
             return
         except Exception:
-            logging.exception("Не вдалося додати предмет")
+            log_failure("Не вдалося додати предмет")
             self.show_error(GENERIC_ERROR)
             return
         self.error.hide()
@@ -400,7 +400,7 @@ class AccountCard(SettingsCard):
             self.current_edit.clear()
             return
         except Exception:
-            logging.exception("Не вдалося змінити пароль")
+            log_failure("Не вдалося змінити пароль")
             self.show_error(GENERIC_ERROR)
             return
         for edit in (self.current_edit, self.new_edit, self.repeat_edit):

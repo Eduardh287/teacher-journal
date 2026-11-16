@@ -1,7 +1,6 @@
 """Точка входу: запуск застосунку."""
 import logging
 import sys
-from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
@@ -29,20 +28,23 @@ def app_icon() -> QIcon:
     return QIcon()
 
 
+def _say(message: str) -> None:
+    """Результат службового режиму в stdout (віконний exe його не має)."""
+    if sys.stdout:
+        print(message)
+
+
 def run_smoke() -> int:
     """--smoke: підняти вбудовану БД, мігрувати, перевірити запит, зупинити. Без вікон.
 
     Лише у зібраній (bundled) версії: інакше можна зачепити робочу базу розробника.
     """
     if not embedded_db.is_bundled_mode():
-        message = "SMOKE FAIL not bundled"
-        if sys.stdout:
-            print(message)
+        _say("SMOKE FAIL not bundled")
         return 1
     lock = single_instance.acquire()
     if lock is None:  # програма вже відкрита: ні бази, ні сервера не чіпаємо
-        if sys.stdout:
-            print("SMOKE SKIP already open")
+        _say("SMOKE SKIP already open")
         return single_instance.ALREADY_OPEN_CODE
     try:
         url = embedded_db.ensure_running()
@@ -62,8 +64,7 @@ def run_smoke() -> int:
         (embedded_db.requested_root() / "smoke_result.txt").write_text(message, encoding="utf-8")
     except OSError:
         pass
-    if sys.stdout:
-        print(message)
+    _say(message)
     return code
 
 
@@ -74,8 +75,7 @@ def run_stop_server() -> int:
     нічого не чіпає: сервер потрібен їй.
     """
     if not embedded_db.is_bundled_mode():
-        if sys.stdout:
-            print("STOP-SERVER FAIL not bundled")
+        _say("STOP-SERVER FAIL not bundled")
         return 1
     lock = single_instance.acquire()
     if lock is None:

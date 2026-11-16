@@ -465,12 +465,51 @@ def test_error_path_does_not_stop_a_foreign_server(fake_pg, monkeypatch):
     def migration_fails(url):
         raise e.EmbeddedDbError("x")
 
+    monkeypatch.setattr(e, "schema_is_current", lambda url: False)
     monkeypatch.setattr(e, "backup_before_migration", migration_fails)
     _prepare_running(layout, monkeypatch, fake)
     (layout.pgdata / "postmaster.pid").write_text("1\nx\n0\n54331\n")
     with pytest.raises(e.EmbeddedDbError):
         e.ensure_running()
     assert fake.commands("stop") == []
+
+
+def _migration_steps(monkeypatch, fake_pg, *, current):
+    """ensure_running зі справжнім порядком кроків; повертає журнал викликів backup / upgrade."""
+    layout, pg = fake_pg
+    fake = _Pg(monkeypatch, status_codes=(0,))
+    monkeypatch.setattr(e, "resolve_layout", lambda: layout)
+    monkeypatch.setattr(e, "EmbeddedDb", lambda lay: _EmbeddedDbClass(lay, pg_root=pg))
+    monkeypatch.setattr(e, "_instance", None)
+    monkeypatch.setattr(e.atexit, "register", lambda func: None)
+    _prepare_running(layout, monkeypatch, fake)
+    (layout.pgdata / "postmaster.pid").write_text("1\nx\n0\n54331\n")
+    steps = []
+    monkeypatch.setattr(e, "current_revision", lambda url: current)
+    monkeypatch.setattr(e, "script_head", lambda: "head")
+    monkeypatch.setattr(e, "backup_before_migration", lambda url: steps.append("backup"))
+    monkeypatch.setattr(e, "upgrade_schema", lambda url: steps.append("upgrade"))
+    return steps
+
+
+def test_up_to_date_schema_skips_backup_and_alembic(monkeypatch, fake_pg):
+    steps = _migration_steps(monkeypatch, fake_pg, current="head")
+    e.ensure_running()
+    assert steps == []
+
+
+def test_old_schema_gets_backup_then_upgrade(monkeypatch, fake_pg):
+    steps = _migration_steps(monkeypatch, fake_pg, current="old")
+    e.ensure_running()
+    assert steps == ["backup", "upgrade"]
+
+
+def test_schema_check_failure_takes_the_guarded_path(monkeypatch):
+    def boom(url):
+        raise OSError("no connection")
+
+    monkeypatch.setattr(e, "current_revision", boom)
+    assert e.schema_is_current("postgresql+psycopg://u:p@h/db") is False
 
 
 def test_force_stop_ignores_ownership(fake_pg, monkeypatch):

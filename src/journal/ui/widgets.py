@@ -1,13 +1,12 @@
 """Невеликі будівельні блоки інтерфейсу, спільні для всіх вікон."""
-import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QFontMetrics, QPainter
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -24,12 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.services.semesters import MONTHS_UA, SemesterBoundaries
+from journal.logging_setup import log_failure
 from journal.ui import icons, theme
 
 SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
-CONFLICT_LIMIT = 10  # скільки конфліктних уроків перелічуємо, далі «і ще N»
-CONFLICT_HEADER = "Зміну не збережено: ці уроки потрапляють у канікули."
 
 
 def label(text: str = "", *, object_name: str = "", muted: bool = False, wrap: bool = False) -> QLabel:
@@ -154,16 +151,6 @@ def confirm(parent: QWidget | None, text: str, accept_text: str) -> bool:
     return box.clickedButton() is accept
 
 
-def conflict_text(conflicts: Sequence, header: str = CONFLICT_HEADER) -> str:
-    """`header` і перелік уроків «9-А · Алгебра — 15.01.2027», що потрапляють у канікули (перші 10, далі «і ще N»)."""
-    lines = [
-        f"{c.class_name} · {c.subject_name} — {c.lesson_date:%d.%m.%Y}" for c in conflicts[:CONFLICT_LIMIT]
-    ]
-    if len(conflicts) > CONFLICT_LIMIT:
-        lines.append(f"і ще {len(conflicts) - CONFLICT_LIMIT}")
-    return "\n".join([header, *lines])
-
-
 class FormDialog(QDialog):
     """Основа діалогів-форм: заголовок, `body` з полями 32/28, рядок помилки й безпечний виклик сервісу.
 
@@ -199,7 +186,9 @@ class FormDialog(QDialog):
         self.error_label.setText(text)
         self.error_label.show()
 
-    def add_submit(self, text: str, slot: Callable, layout: Any = None, *, default: bool = True) -> QPushButton:
+    def add_submit(
+        self, text: str, slot: Callable, layout: QBoxLayout | None = None, *, default: bool = True
+    ) -> QPushButton:
         """Головна кнопка (за замовчуванням — Enter у будь-якому полі запускає дію)."""
         submit = button(text, variant="primary")
         submit.setDefault(default)
@@ -212,7 +201,11 @@ class FormDialog(QDialog):
         return str(error)
 
     def run(
-        self, call: Callable[[], Any], error_cls: type[Exception], log_message: str, fallback_text: str = SAVE_ERROR_TEXT
+        self,
+        call: Callable[[], Any],
+        error_cls: type[Exception],
+        log_message: str,
+        fallback_text: str = SAVE_ERROR_TEXT,
     ) -> tuple[bool, Any]:
         """Виконує call. Повертає (успіх, результат); `error_cls` показує його текст, решта — fallback_text.
 
@@ -224,7 +217,7 @@ class FormDialog(QDialog):
         except error_cls as error:
             self.show_error(self.error_text(error))
         except Exception:
-            logging.exception(log_message)
+            log_failure(log_message)
             self.show_error(fallback_text)
         return False, None
 
@@ -318,11 +311,6 @@ class EmptyState(QWidget):
             self.action.setIcon(icons.icon(self._action_icon, theme.color("accent_text"), size=16))
 
 
-def empty_state(title: str, hint: str = "", action: tuple[str, Callable] | None = None, **kwargs: Any) -> EmptyState:
-    """Порожній стан: `action` — (текст кнопки, слот). Див. EmptyState."""
-    return EmptyState(title, hint, action, **kwargs)
-
-
 def card_grid(scroll: QScrollArea, cards: Sequence[QWidget], columns: int = 3) -> None:
     """Розкладає картки сіткою по `columns` у рядку в області прокручування (притиснуті догори)."""
     host = QWidget()
@@ -388,7 +376,9 @@ class CardListView(QWidget):
 
 
 class SettingsCard(QFrame):
-    """Картка сторінки «Налаштування»: заголовок, підказка, далі `body`; `add_feedback()` додає рядки стану й помилки."""
+    """Картка сторінки «Налаштування»: заголовок, підказка, далі `body`.
+
+    `add_feedback()` додає рядки стану й помилки."""
 
     def __init__(self, title: str, hint: str, *, wrap_hint: bool = False) -> None:
         super().__init__()
@@ -415,47 +405,3 @@ class SettingsCard(QFrame):
         self.status.hide()
         self.error.setText(text)
         self.error.show()
-
-
-class SemesterBoundsEditor(QWidget):
-    """Межі двох семестрів: рядки «I семестр: з [місяць] по [місяць]». `combos` — за ключами s1_start…s2_end."""
-
-    KEYS = ("s1_start", "s1_end", "s2_start", "s2_end")
-
-    def __init__(self, boundaries: SemesterBoundaries | None = None, *, caption_width: int = 0, spacing: int = 12) -> None:
-        super().__init__()
-        self.combos: dict[str, QComboBox] = {}
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(spacing)
-        for caption, start_key, end_key in (("I семестр", "s1_start", "s1_end"), ("II семестр", "s2_start", "s2_end")):
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            if caption_width:  # підпис фіксованої ширини, «з» окремо — стовпці вирівняні між рядками
-                title = label(f"{caption}:")
-                title.setMinimumWidth(caption_width)
-                row.addWidget(title)
-                row.addWidget(label("з"))
-            else:
-                row.addWidget(label(f"{caption}: з"))
-            row.addWidget(self._month_combo(start_key))
-            row.addWidget(label("по"))
-            row.addWidget(self._month_combo(end_key))
-            row.addStretch(1)
-            layout.addLayout(row)
-        if boundaries is not None:
-            self.set_boundaries(boundaries)
-
-    def _month_combo(self, key: str) -> QComboBox:
-        combo = QComboBox()
-        for number, name in enumerate(MONTHS_UA, start=1):
-            combo.addItem(name, number)
-        self.combos[key] = combo
-        return combo
-
-    def boundaries(self) -> SemesterBoundaries:
-        return SemesterBoundaries(*(self.combos[key].currentData() for key in self.KEYS))
-
-    def set_boundaries(self, value: SemesterBoundaries) -> None:
-        for key, month in zip(self.KEYS, (value.s1_start, value.s1_end, value.s2_start, value.s2_end)):
-            self.combos[key].setCurrentIndex(month - 1)

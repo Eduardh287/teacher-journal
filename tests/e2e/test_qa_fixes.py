@@ -11,7 +11,8 @@ from journal.ui.classes_page import _ClassCard
 from journal.ui.journal_dialogs import NewJournalDialog
 from journal.ui.journals_page import _JournalCard, default_api_factory
 from journal.ui.widgets import ElidedLabel
-from tests.e2e.test_qa_scenarios import STUDENTS, make_class, make_journal, make_lesson, open_nav
+from tests.e2e.harness import make_class, make_journal, make_lesson
+from tests.e2e.test_qa_scenarios import STUDENTS, open_nav
 
 
 @pytest.mark.parametrize("size", [(1280, 800), (1100, 700)])
@@ -39,11 +40,11 @@ def test_card_titles_elide_and_columns_stay_equal(window, teacher, session, qtbo
     open_nav(window, 0)
     window.classes_page.show_list()
     qtbot.wait(50)
-    cards = window.classes_page.scroll.widget().findChildren(_ClassCard)
+    cards = window.classes_page.list_view.scroll.widget().findChildren(_ClassCard)
     assert len(cards) == 3
     assert len({c.width() for c in cards}) == 1
-    assert window.classes_page.scroll.horizontalScrollBar().maximum() == 0
-    assert window.classes_page.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.classes_page.list_view.scroll.horizontalScrollBar().maximum() == 0
+    assert window.classes_page.list_view.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 
     make_journal(session, tid, long_class.id, "Алгебра")
     for name in ("5-А", "6-Б"):
@@ -52,10 +53,10 @@ def test_card_titles_elide_and_columns_stay_equal(window, teacher, session, qtbo
     open_nav(window, 1)
     window.journals_page.show_list()
     qtbot.wait(50)
-    jcards = window.journals_page.scroll.widget().findChildren(_JournalCard)
+    jcards = window.journals_page.list_view.scroll.widget().findChildren(_JournalCard)
     assert len(jcards) == 3 and len({c.width() for c in jcards}) == 1
-    assert window.journals_page.scroll.horizontalScrollBar().maximum() == 0
-    assert window.journals_page.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.journals_page.list_view.scroll.horizontalScrollBar().maximum() == 0
+    assert window.journals_page.list_view.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert all(c.findChildren(ElidedLabel) for c in jcards)
 
 

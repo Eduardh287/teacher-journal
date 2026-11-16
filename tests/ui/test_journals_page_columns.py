@@ -9,8 +9,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
+from journal.services.grid_text import computed_text
 from journal.services.journal_types import ComputedCell, GridColumn
-from journal.ui.journal_grid import computed_text, computed_tooltip
+from journal.ui import journals_page
+from journal.ui.journal_grid import computed_tooltip
 from tests.ui.conftest import type_text
 
 L1, L2 = 1, 2
@@ -382,14 +384,18 @@ def pick(monkeypatch, text):
         def __init__(self, *_):
             self.items = []
 
-        def addAction(self, label):
+        def addAction(self, label, callback):
             action = _Action(label)
+            action.callback = callback
             self.items.append(action)
             return action
 
         def exec(self, *_):
             shown[:] = [a.text() for a in self.items]
-            return next((a for a in self.items if a.text() == text), None)
+            chosen = next((a for a in self.items if a.text() == text), None)
+            if chosen is not None:
+                chosen.callback()
+            return chosen
 
     monkeypatch.setattr(journal_grid, "QMenu", FakeMenu)
     return shown
@@ -449,10 +455,10 @@ def test_delete_thematic_asks_confirm(themed, monkeypatch):
     page, tem = themed
     fake = page_fake(page)
     pick(monkeypatch, "Видалити")
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: False)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: False)
     open_header_menu(page, col(page, "thematic", tem))
     assert fake.calls_of("delete_column") == []
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: True)
     open_header_menu(page, col(page, "thematic", tem))
     assert fake.calls_of("delete_column") == [("delete_column", tem)]
     assert "thematic" not in kinds(page)
@@ -463,7 +469,7 @@ def test_delete_empty_notebook_asks_confirm(make_page, fake, monkeypatch):
     page = make_page(fake)
     pick(monkeypatch, "Видалити")
     asked = []
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: asked.append(text) or True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: asked.append(text) or True)
     open_header_menu(page, col(page, "notebook", nb))
     assert len(asked) == 1
     assert "notebook" not in kinds(page)
@@ -477,7 +483,7 @@ def test_delete_notebook_with_grades_is_refused_with_service_text(with_notebook,
     pick(monkeypatch, "Видалити")
     shown = []
     monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text, *a: shown.append(text))
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("підтвердження замість відмови"))
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: pytest.fail("підтвердження замість відмови"))
     open_header_menu(page, col(page, "notebook", nb))
     assert shown == ["У стовпчику «Зошит» є оцінки (1) — його не можна видалити. Спершу очистьте їх."]
     assert "notebook" in kinds(page)
@@ -486,7 +492,7 @@ def test_delete_notebook_with_grades_is_refused_with_service_text(with_notebook,
 def test_panel_column_signals_reach_page(themed, monkeypatch):
     page, tem = themed
     fake = page_fake(page)
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: True)
     page.lesson_panel.column_delete_requested.emit(tem)
     assert fake.calls_of("delete_column") == [("delete_column", tem)]
 

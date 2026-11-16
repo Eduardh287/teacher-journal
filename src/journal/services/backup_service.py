@@ -182,6 +182,10 @@ def database_has_data(url: URL) -> bool:
     return bool(row and row[0])
 
 
+def _nothing() -> None:
+    """Типовий `dispose_engine`: у тестах і поза застосунком engine не закривають."""
+
+
 class BackupService:
     def __init__(
         self,
@@ -192,12 +196,12 @@ class BackupService:
         backup_dir: Path | None = None,
         runner: Runner = subprocess_runner,
         now: Callable[[], datetime] = datetime.now,
-        dispose_engine: Callable[[], None] | None = None,
+        dispose_engine: Callable[[], None] = _nothing,
         reset_schema: Callable[[URL], None] = reset_public_schema,
         upgrade_schema: Callable[[str], None] = embedded_db.upgrade_schema,
         known_revs: Callable[[], set[str]] = known_revisions,
         marker_path: Path | None = None,
-        has_data: Callable[[URL], bool] | None = None,
+        has_data: Callable[[URL], bool] = database_has_data,
     ) -> None:
         self._url = make_url(url) if isinstance(url, str) else url
         self._pg_bin = Path(pg_bin)
@@ -205,13 +209,13 @@ class BackupService:
         self.backup_dir = Path(backup_dir) if backup_dir else None
         self._run = runner
         self._now = now
-        self._dispose = dispose_engine or (lambda: None)
+        self._dispose = dispose_engine
         self._reset_schema = reset_schema
         self._upgrade_schema = upgrade_schema
         self._known_revs = known_revs
         # маркер «відновлення триває»: у ньому шлях до копії «перед відновленням»
         self.marker_path = Path(marker_path) if marker_path else embedded_db.requested_root() / RESTORE_MARKER_NAME
-        self._has_data = has_data or database_has_data
+        self._has_data = has_data
         self.restore_copy_unavailable = False  # маркер є, але папка його копії недоступна
         self.fallback_used = False  # остання копія пішла в типову папку, бо обрана недоступна
 
