@@ -504,6 +504,23 @@ def test_old_schema_gets_backup_then_upgrade(monkeypatch, fake_pg):
     assert steps == ["backup", "upgrade"]
 
 
+def test_fresh_database_gets_no_backup_but_upgrade(monkeypatch, fake_pg):
+    """Нова база: alembic_version ще немає (UndefinedTable) -> копії немає, міграція виконується."""
+    real_backup = e.backup_before_migration
+    steps = _migration_steps(monkeypatch, fake_pg, current=None)
+    created = []
+    _fake_service(monkeypatch, created)
+
+    def no_alembic_table(url):
+        raise psycopg.errors.UndefinedTable("relation does not exist")
+
+    monkeypatch.setattr(e, "current_revision", no_alembic_table)
+    monkeypatch.setattr(e, "backup_before_migration", real_backup)
+    e.ensure_running()
+    assert created == []
+    assert steps == ["upgrade"]
+
+
 def test_schema_check_failure_takes_the_guarded_path(monkeypatch):
     def boom(url):
         raise OSError("no connection")
