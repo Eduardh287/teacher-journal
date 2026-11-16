@@ -471,7 +471,7 @@ class JournalsPage(QWidget):
             return
         items = [
             f"{lesson.number}. {lesson.lesson_date:%d.%m}" + (f" · {lesson.topic}" if lesson.topic else "")
-            for i, lesson in enumerate(lessons, start=1)
+            for lesson in lessons
         ]
         # Нинішнє місце — останній урок перед стовпчиком у порядку відображення (GridData.columns).
         current, lesson_pos = 0, -1
@@ -501,13 +501,13 @@ class JournalsPage(QWidget):
         if extra.kind == "notebook":
             # «Зошит» з оцінками не видаляється: причину (з кількістю) каже сервіс.
             graded = sum(1 for (_, key), c in model.computed.items() if key == ("notebook", column_id) and c.value)
-            if max(extra.grade_count, graded) == 0 and not confirm(self, 
+            if max(extra.grade_count, graded) == 0 and not confirm(self,
                 f"Видалити стовпчик «Зошит» № {extra.ordinal}?", "Видалити"
             ):
                 return
             ok, _ = self._call(lambda api: api.delete_column(self.teacher_id, column_id), banner=True, inform=True)
         else:
-            if not confirm(self, 
+            if not confirm(self,
                 f"Видалити тематичну № {extra.ordinal}? Оцінки, виставлені в ній вручну, зникнуть.", "Видалити"
             ):
                 return
@@ -578,7 +578,7 @@ class JournalsPage(QWidget):
         # завантаження: оцінки, щойно введені з клавіатури, теж мають захищати урок.
         live_count = sum(1 for (_, lid) in self.grid_view.grid_model.cells if lid == lesson_id)
         # Урок з відмітками не видаляється (рішення викладачки): причину каже сервіс — показуємо її як є.
-        if max(lesson.entry_count, live_count) == 0 and not confirm(self, 
+        if max(lesson.entry_count, live_count) == 0 and not confirm(self,
             f"Видалити урок {lesson.lesson_date:%d.%m.%Y}?", "Видалити"
         ):
             return

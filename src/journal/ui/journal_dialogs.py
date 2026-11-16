@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QWidget,
 )
 
@@ -87,7 +88,7 @@ class NewJournalDialog(_ApiDialog):
             self.body.addWidget(field("КЛАС", self.class_combo))
             self.body.addWidget(field("ПРЕДМЕТ", self.subject_combo))
             self.body.addWidget(self.error_label)
-            self.submit_button = self.add_submit("Створити", self._on_submit)
+            self.submit_button: QPushButton | None = self.add_submit("Створити", self._on_submit)
         else:
             self.body.addWidget(self.hint_label)
             self.body.addWidget(self.error_label)

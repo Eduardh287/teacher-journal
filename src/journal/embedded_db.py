@@ -510,7 +510,8 @@ def current_revision(url: str) -> str | None:
 
 
 def schema_is_current(url: str) -> bool:
-    """Схема вже на останній ревізії — міграції (і Alembic) не потрібні. Будь-який збій — False:
+    """Схема вже на останній ревізії: міграції не запускаються (alembic upgrade не викликається).
+    Модуль Alembic імпортується лише для читання head (script_head). Будь-який збій — False:
     тоді працює повний шлях із копією й суворою обробкою помилок."""
     try:
         return current_revision(url) == script_head()

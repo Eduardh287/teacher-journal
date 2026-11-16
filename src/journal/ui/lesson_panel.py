@@ -37,6 +37,8 @@ TEXT_PADDING = 4  # відступ усередині клітинки (як у 
 TEXT_SLACK = 10   # запас по ширині на переноси й межу клітинки
 
 _SEPARATOR_ROLE = Qt.ItemDataRole.UserRole + 1  # True у клітинках рядка-роздільника
+
+
 def lesson_row_text(lesson: LessonInfo) -> str:
     """Текст стовпця «Тема»: для звичайного уроку — тема (або порожньо), для решти — «Тип: тема»."""
     topic = lesson.topic or ""
