@@ -1,5 +1,4 @@
 """Діалоги сторінки «Класи»: клас, учень, імпорт списку учнів."""
-import logging
 from collections.abc import Callable
 from datetime import date
 from typing import Any
@@ -7,13 +6,10 @@ from typing import Any
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -29,55 +25,24 @@ from journal.services.class_service import (
 )
 from journal.services.grid_text import plural
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import button, field, label
-
-SAVE_ERROR_TEXT = "Не вдалося зберегти зміни"
+from journal.ui.widgets import FormDialog, button, field, label
 
 
-class _ClassDialogBase(QDialog):
+class _ClassDialogBase(FormDialog):
     """Спільна основа: заголовок, рядок помилки та безпечний виклик ClassService."""
 
     def __init__(self, title: str, teacher_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(440)
+        super().__init__(title, parent)
         self.teacher_id = teacher_id
 
-        # Рядок помилки — як в auth-діалогах: показується прямо в діалозі.
-        self.error_label = QLabel()
-        self.error_label.setProperty("error", True)
-        self.error_label.setWordWrap(True)
-        self.error_label.hide()
-
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(32, 28, 32, 28)
-        self.body.setSpacing(14)
-        self.body.addWidget(label(title, object_name="EmptyTitle"))
-
-    def show_error(self, text: str) -> None:
-        self.error_label.setText(text)
-        self.error_label.show()
-
-    def clear_error(self) -> None:
-        self.error_label.hide()
-
     def run_service(self, action: Callable[[ClassService], Any]) -> tuple[bool, Any]:
-        """Виконує action в одній транзакції. Повертає (успіх, результат).
+        """Виконує action в одній транзакції. Повертає (успіх, результат)."""
 
-        ClassError ловимо ПОЗА блоком with, щоб транзакція відкотилась.
-        """
-        self.clear_error()
-        try:
+        def call():
             with service_scope(ClassService) as service:
-                result = action(service)
-        except ClassError as error:
-            self.show_error(str(error))
-            return False, None
-        except Exception:
-            logging.exception("Помилка під час роботи з класами")
-            self.show_error(SAVE_ERROR_TEXT)
-            return False, None
-        return True, result
+                return action(service)
+
+        return self.run(call, ClassError, "Помилка під час роботи з класами")
 
     @staticmethod
     def _edit(placeholder: str, max_length: int) -> QLineEdit:
@@ -116,11 +81,7 @@ class ClassDialog(_ClassDialogBase):
         self.body.addWidget(field("НАЗВА КЛАСУ", self.name_edit))
         self.body.addWidget(field("НАВЧАЛЬНИЙ РІК", self.year_combo))
         self.body.addWidget(self.error_label)
-        submit = button("Зберегти" if editing else "Створити", variant="primary")
-        submit.setDefault(True)
-        submit.setMinimumHeight(40)
-        submit.clicked.connect(self._on_submit)
-        self.body.addWidget(submit)
+        self.add_submit("Зберегти" if editing else "Створити", self._on_submit)
 
     def _on_submit(self) -> None:
         name, year = self.name_edit.text(), self.year_combo.currentText()
@@ -168,19 +129,12 @@ class StudentDialog(_ClassDialogBase):
             add_more = button("Додати ще")
             add_more.setMinimumHeight(40)
             add_more.clicked.connect(self._on_add_more)
-            add = button("Додати", variant="primary")
-            add.setDefault(True)
-            add.setMinimumHeight(40)
-            add.clicked.connect(self._on_add)
             row.addWidget(add_more)
-            row.addWidget(add, 1)
+            self.add_submit("Додати", self._on_add, row)
+            row.setStretch(1, 1)
             self.body.addLayout(row)
         else:
-            save = button("Зберегти", variant="primary")
-            save.setDefault(True)
-            save.setMinimumHeight(40)
-            save.clicked.connect(self._on_rename)
-            self.body.addWidget(save)
+            self.add_submit("Зберегти", self._on_rename)
 
     def _add(self) -> StudentInfo | None:
         text = self.name_edit.text()
@@ -239,10 +193,7 @@ class ImportStudentsDialog(_ClassDialogBase):
         self.body.addWidget(self.preview_label)
         self.body.addWidget(self.error_label)
 
-        self.submit_button = button("Додати учнів", variant="primary")
-        self.submit_button.setMinimumHeight(40)
-        self.submit_button.clicked.connect(self._on_submit)
-        self.body.addWidget(self.submit_button)
+        self.submit_button = self.add_submit("Додати учнів", self._on_submit, default=False)
 
         # Debounce: підказку оновлюємо через 300 мс після останнього натискання клавіші.
         self._timer = QTimer(self)

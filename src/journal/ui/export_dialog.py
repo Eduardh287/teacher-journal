@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QStandardPaths
-from PySide6.QtWidgets import QComboBox, QDateEdit, QDialog, QFileDialog, QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDateEdit, QDialog, QFileDialog, QHBoxLayout, QMessageBox, QWidget
 
 from journal.services.export_service import (
     BAD_RANGE_TEXT,
@@ -26,7 +26,7 @@ from journal.services.journal_types import JournalApi, JournalError, JournalInfo
 from journal.logging_setup import log_failure
 from journal.ui import theme
 from journal.ui.settings_cards import open_folder
-from journal.ui.widgets import button, field, label
+from journal.ui.widgets import FormDialog, button, field, label
 
 EXPORT_DIR_KEY = "export_dir"
 CUSTOM_PERIOD = "Власний період"
@@ -34,20 +34,15 @@ GENERIC_EXPORT_ERROR = "Не вдалося створити файл. Спро�
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
 
-class ExportDialog(QDialog):
+class ExportDialog(FormDialog):
     """Вибір періоду: швидкі варіанти й дві дати «з» / «по»."""
 
     def __init__(self, info: JournalInfo, parent: QWidget | None = None, today: date | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Експорт в Excel")
+        super().__init__("Експорт в Excel", parent, width=380)
         self.setModal(True)
-        self.setMinimumWidth(380)
         self._presets = period_presets(info, today or date.today())
 
-        body = QVBoxLayout(self)
-        body.setContentsMargins(32, 28, 32, 28)
-        body.setSpacing(14)
-        body.addWidget(label("Експорт в Excel", object_name="EmptyTitle"))
+        body = self.body
         body.addWidget(label(f"{info.class_name} · {info.subject_name}", muted=True))
 
         self.preset_combo = QComboBox()
@@ -64,21 +59,14 @@ class ExportDialog(QDialog):
         dates.addWidget(field("ПО", self.to_edit))
         body.addLayout(dates)
 
-        self.error_label = label("", wrap=True)
-        self.error_label.setProperty("error", True)
-        self.error_label.hide()
         body.addWidget(self.error_label)
 
-        self.submit_button = button("Далі", variant="primary")
-        self.submit_button.setMinimumHeight(40)
-        self.submit_button.setDefault(True)
-        self.submit_button.clicked.connect(self._on_submit)
         cancel = button("Скасувати")
         cancel.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(cancel)
-        buttons.addWidget(self.submit_button)
+        self.submit_button = self.add_submit("Далі", self._on_submit, buttons)
         body.addLayout(buttons)
 
         self.preset_combo.currentIndexChanged.connect(self._on_preset)
@@ -120,8 +108,7 @@ class ExportDialog(QDialog):
     def _on_submit(self) -> None:
         start, end = self.period()
         if start > end:
-            self.error_label.setText(BAD_RANGE_TEXT)
-            self.error_label.show()
+            self.show_error(BAD_RANGE_TEXT)
             return
         self.accept()
 

@@ -36,14 +36,6 @@ HOMEWORK_HINT = "Подвійний клік — змінити домашнє �
 TEXT_PADDING = 4  # відступ усередині клітинки (як у QSS панелі)
 TEXT_SLACK = 10   # запас по ширині на переноси й межу клітинки
 
-# Тло рядка за типом уроку (звичайний урок — без тла)
-_TINT = {
-    "test": "lesson_test_soft",
-    "lab": "lesson_lab_soft",
-    "independent": "lesson_independent_soft",
-    "quiz": "lesson_quiz_soft",
-    "project": "lesson_project_soft",
-}
 _SEPARATOR_ROLE = Qt.ItemDataRole.UserRole + 1  # True у клітинках рядка-роздільника
 # Порядок стовпчиків без дати при однаковій даті: уроки → «Зошит» → «Тематична»
 _KIND_ORDER = {"notebook": 0, "thematic": 1}
@@ -259,7 +251,7 @@ class LessonPanel(QWidget):
             QTableWidgetItem(NO_TOPIC_TEXT if placeholder else text),
             QTableWidgetItem(homework),
         )
-        tint = _TINT.get(lesson.lesson_type)
+        tint = theme.LESSON_TINT.get(lesson.lesson_type)
         for column, item in enumerate(items):
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             if column < TOPIC_COL:
@@ -279,7 +271,7 @@ class LessonPanel(QWidget):
 
     def _fill_separator_row(self, row: int, column: ExtraColumnInfo, muted: QBrush) -> None:
         name = EXTRA_COLUMN_TYPES[column.kind][0]
-        tint = {"thematic": "col_thematic_soft", "notebook": "col_notebook_soft"}.get(column.kind)
+        tint = theme.COLUMN_TINT.get(column.kind)
         tip = f"{name} {column.ordinal}\nПравий клік — перемістити або видалити"
         for index in range(4):
             item = QTableWidgetItem(name if index == 0 else "")

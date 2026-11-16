@@ -61,21 +61,9 @@ ABSENT_KEYS = ("н", "y")
 SICK_KEYS = ("х", "[")
 LATE_KEYS = ("з", "p")
 
-# Тло заголовка за типом уроку (None — звичайне)
-_LESSON_TINT = {
-    "test": "lesson_test_soft",
-    "lab": "lesson_lab_soft",
-    "independent": "lesson_independent_soft",
-    "quiz": "lesson_quiz_soft",
-    "project": "lesson_project_soft",
-}
-# Тло стовпців без дати (заголовок і клітинки)
-_COLUMN_TINT = {
-    "thematic": "col_thematic_soft",
-    "notebook": "col_notebook_soft",
-    "semester": "col_final_soft",
-    "annual": "col_final_soft",
-}
+# Тло і колір тексту клітинки за позначкою присутності (токени теми)
+_ATTENDANCE_SOFT = {"absent": "mark_absent_soft", "sick": "mark_sick_soft", "late": "mark_late_soft"}
+_ATTENDANCE_TEXT = {"absent": "mark_absent", "sick": "mark_sick", "late": "mark_late"}
 
 SaveCell = Callable[[int, int, AttendanceCode, "int | None", "str | None"], "tuple[bool, CellInfo | None]"]
 SaveOverride = Callable[[int, ComputedKey, "int | None", bool], "tuple[bool, dict[ComputedKey, ComputedCell] | None]"]
@@ -338,61 +326,47 @@ class JournalHeaderView(QHeaderView):
         model = self.model()
         lesson = model.headerData(logical_index, Qt.Orientation.Horizontal, LessonRole)
         column: GridColumn | None = model.headerData(logical_index, Qt.Orientation.Horizontal, ColumnRole)
+        kind = column.kind if column is not None else ""
         painter.save()
-        if lesson:
-            token = _LESSON_TINT.get(lesson.lesson_type)
-        else:
-            token = _COLUMN_TINT.get(column.kind) if column else None
+        token = theme.LESSON_TINT.get(lesson.lesson_type) if lesson else theme.COLUMN_TINT.get(kind)
         painter.fillRect(rect, QColor(theme.color(token or "surface")))
-        painter.setPen(QPen(QColor(theme.color("border"))))
-        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
-        painter.drawLine(rect.topRight(), rect.bottomRight())
-        if column is not None and column.kind == "semester":
-            painter.setPen(QPen(QColor(theme.color("muted")), 2))
-            painter.drawLine(rect.topLeft(), rect.bottomLeft())
-        if column is not None and column.kind in ("thematic", "notebook"):
+        _draw_borders(painter, rect, kind == "semester")
+        if kind in ("thematic", "notebook"):
             extra: ExtraColumnInfo | None = model.headerData(logical_index, Qt.Orientation.Horizontal, ExtraRole)
-            font = QFont(painter.font())
-            font.setPointSize(9)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor(theme.color("text")))
-            painter.drawText(
-                QRect(rect.x(), rect.y() + 6, rect.width(), 18), Qt.AlignmentFlag.AlignCenter,
-                EXTRA_COLUMN_TYPES[column.kind][1],
-            )
-            if extra:
-                font.setBold(False)
-                font.setPointSize(8)
-                painter.setFont(font)
-                painter.setPen(QColor(theme.color("muted")))
-                painter.drawText(
-                    QRect(rect.x(), rect.y() + 24, rect.width(), 16), Qt.AlignmentFlag.AlignCenter, str(extra.ordinal)
-                )
-        elif column is not None and column.kind in FINAL_COLUMN_TITLES:
-            font = QFont(painter.font())
-            font.setPointSize(9)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor(theme.color("text")))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, FINAL_COLUMN_TITLES[column.kind][1])
-        if lesson:
-            abbr = LESSON_TYPES[lesson.lesson_type][1]
-            top = QRect(rect.x(), rect.y() + 6, rect.width(), 18)
-            bottom = QRect(rect.x(), rect.y() + 24, rect.width(), 16)
-            font = QFont(painter.font())
-            font.setPointSize(9)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor(theme.color("text")))
-            painter.drawText(top, Qt.AlignmentFlag.AlignCenter, f"{lesson.lesson_date:%d.%m}")
-            if abbr:
-                font.setBold(False)
-                font.setPointSize(8)
-                painter.setFont(font)
-                painter.setPen(QColor(theme.color("muted")))
-                painter.drawText(bottom, Qt.AlignmentFlag.AlignCenter, abbr)
+            _draw_two_lines(painter, rect, EXTRA_COLUMN_TYPES[kind][1], str(extra.ordinal) if extra else "")
+        elif kind in FINAL_COLUMN_TITLES:
+            _set_font(painter, 9, True, "text")
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, FINAL_COLUMN_TITLES[kind][1])
+        elif lesson:
+            _draw_two_lines(painter, rect, f"{lesson.lesson_date:%d.%m}", LESSON_TYPES[lesson.lesson_type][1])
         painter.restore()
+
+
+def _set_font(painter: QPainter, size: int, bold: bool, color_token: str) -> None:
+    font = QFont(painter.font())
+    font.setPointSize(size)
+    font.setBold(bold)
+    painter.setFont(font)
+    painter.setPen(QColor(theme.color(color_token)))
+
+
+def _draw_two_lines(painter: QPainter, rect: QRect, top: str, bottom: str = "") -> None:
+    """Заголовок стовпця: жирний рядок зверху й (якщо є) приглушений дрібніший знизу."""
+    _set_font(painter, 9, True, "text")
+    painter.drawText(QRect(rect.x(), rect.y() + 6, rect.width(), 18), Qt.AlignmentFlag.AlignCenter, top)
+    if bottom:
+        _set_font(painter, 8, False, "muted")
+        painter.drawText(QRect(rect.x(), rect.y() + 24, rect.width(), 16), Qt.AlignmentFlag.AlignCenter, bottom)
+
+
+def _draw_borders(painter: QPainter, rect: QRect, thick_left: bool) -> None:
+    """Сітка: лінії знизу й справа; перед підсумковими стовпцями — жирний роздільник зліва."""
+    painter.setPen(QPen(QColor(theme.color("border"))))
+    painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+    painter.drawLine(rect.topRight(), rect.bottomRight())
+    if thick_left:
+        painter.setPen(QPen(QColor(theme.color("muted")), 2))
+        painter.drawLine(rect.topLeft(), rect.bottomLeft())
 
 
 class JournalCellDelegate(QStyledItemDelegate):
@@ -401,83 +375,77 @@ class JournalCellDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         cell: CellInfo = index.data(CellRole)
         model: JournalGridModel = index.model()
-        row = index.row()
         rect = option.rect
-        muted_row = model.students[row].archived
+        muted_row = model.students[index.row()].archived
         kind = model.kind_at(index.column())
-        computed: ComputedCell | None = index.data(ComputedRole)
         painter.save()
-
-        soft = {"absent": "mark_absent_soft", "sick": "mark_sick_soft", "late": "mark_late_soft"}.get(cell.attendance)
-        if muted_row:
-            painter.fillRect(rect, QColor(theme.color("hover")))
-        elif kind != "lesson":
-            painter.fillRect(rect, QColor(theme.color(_COLUMN_TINT[kind])))
-        elif soft:
-            painter.fillRect(rect, QColor(theme.color(soft)))
-        else:
-            painter.fillRect(rect, QColor(theme.color("surface")))
-
-        # сітка
-        painter.setPen(QPen(QColor(theme.color("border"))))
-        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
-        painter.drawLine(rect.topRight(), rect.bottomRight())
-        if kind == "semester":  # жирний роздільник перед підсумковими стовпцями
-            painter.setPen(QPen(QColor(theme.color("muted")), 2))
-            painter.drawLine(rect.topLeft(), rect.bottomLeft())
-
-        # текст
+        self._fill(painter, rect, cell, kind, muted_row)
+        _draw_borders(painter, rect, kind == "semester")
         text = index.data(Qt.ItemDataRole.DisplayRole)
         if text:
-            pending = index.data(PendingRole)
-            if kind == "lesson":
-                color_token = {"absent": "mark_absent", "sick": "mark_sick", "late": "mark_late"}.get(
-                    cell.attendance, "text"
-                )
-                bold = not pending
-                manual = False
-            else:
-                color_token = "text"
-                # авто — звичайна вага; ручне — жирний + акцентне підкреслення; «Зош» — сама оцінка
-                manual = bool(computed and computed.is_manual and kind != "notebook")
-                bold = manual or kind == "notebook"
-                if computed is not None and computed.is_na and not computed.is_manual:
-                    color_token = "muted"
-            if muted_row or pending:
-                color_token = "muted"
-            font = QFont(painter.font())
-            font.setBold(bold and not pending)
-            font.setItalic(bool(pending))
-            painter.setFont(font)
-            painter.setPen(QColor(theme.color(color_token)))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
-            if manual and not pending:
-                metrics = QFontMetrics(font)
-                width = metrics.horizontalAdvance(text)
-                y = rect.center().y() + metrics.ascent() // 2 + 3
-                painter.setPen(QPen(QColor(theme.color("accent")), 2))
-                painter.drawLine(rect.center().x() - width // 2, y, rect.center().x() + (width + 1) // 2, y)
-
-        # трикутник коментаря в правому верхньому куті
+            self._draw_text(painter, rect, text, cell, kind, muted_row, index)
         if kind == "lesson" and cell.comment:
-            size = 10
-            triangle = QPolygon(
-                [
-                    QPoint(rect.right() - size, rect.top() + 1),
-                    QPoint(rect.right() - 1, rect.top() + 1),
-                    QPoint(rect.right() - 1, rect.top() + size),
-                ]
-            )
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(theme.color("accent")))
-            painter.drawPolygon(triangle)
-
-        # виділена клітинка — рамка акцентного кольору
-        if option.state & QStyle.StateFlag.State_Selected:
+            self._draw_comment_mark(painter, rect)
+        if option.state & QStyle.StateFlag.State_Selected:  # виділена клітинка — рамка акцентного кольору
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(theme.color("accent")), 2))
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
         painter.restore()
+
+    @staticmethod
+    def _fill(painter: QPainter, rect: QRect, cell: CellInfo, kind: str, muted_row: bool) -> None:
+        if muted_row:
+            token = "hover"
+        elif kind != "lesson":
+            token = theme.COLUMN_TINT[kind]
+        else:
+            token = _ATTENDANCE_SOFT.get(cell.attendance, "surface")
+        painter.fillRect(rect, QColor(theme.color(token)))
+
+    @staticmethod
+    def _draw_text(painter, rect, text, cell, kind, muted_row, index) -> None:
+        pending = index.data(PendingRole)
+        computed: ComputedCell | None = index.data(ComputedRole)
+        manual = False
+        if kind == "lesson":
+            color_token = _ATTENDANCE_TEXT.get(cell.attendance, "text")
+            bold = not pending
+        else:
+            color_token = "text"
+            # авто — звичайна вага; ручне — жирний + акцентне підкреслення; «Зош» — сама оцінка
+            manual = bool(computed and computed.is_manual and kind != "notebook")
+            bold = manual or kind == "notebook"
+            if computed is not None and computed.is_na and not computed.is_manual:
+                color_token = "muted"
+        if muted_row or pending:
+            color_token = "muted"
+        font = QFont(painter.font())
+        font.setBold(bold and not pending)
+        font.setItalic(bool(pending))
+        painter.setFont(font)
+        painter.setPen(QColor(theme.color(color_token)))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        if manual and not pending:
+            metrics = QFontMetrics(font)
+            width = metrics.horizontalAdvance(text)
+            y = rect.center().y() + metrics.ascent() // 2 + 3
+            painter.setPen(QPen(QColor(theme.color("accent")), 2))
+            painter.drawLine(rect.center().x() - width // 2, y, rect.center().x() + (width + 1) // 2, y)
+
+    @staticmethod
+    def _draw_comment_mark(painter: QPainter, rect: QRect) -> None:
+        """Трикутник коментаря в правому верхньому куті."""
+        size = 10
+        triangle = QPolygon(
+            [
+                QPoint(rect.right() - size, rect.top() + 1),
+                QPoint(rect.right() - 1, rect.top() + 1),
+                QPoint(rect.right() - 1, rect.top() + size),
+            ]
+        )
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.color("accent")))
+        painter.drawPolygon(triangle)
 
 
 class JournalGridView(QTableView):
