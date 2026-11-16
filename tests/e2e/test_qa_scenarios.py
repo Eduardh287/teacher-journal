@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import func, select
 
-from journal.models import Lesson, LessonEntry, Student, Subject, Teacher
+from journal.models import Lesson, LessonEntry, Student, Teacher
 from journal.services.class_service import ClassError, ClassNotFound, ClassService
 from journal.services.journal_service import JournalService
 from journal.services.journal_types import JournalError, JournalNotFound, LessonNotFound, SemesterConflict
@@ -40,6 +40,8 @@ from journal.ui.journal_dialogs import (
 )
 from journal.ui.journals_page import _JournalCard, default_api_factory
 from journal.ui.rollover_dialog import RolloverDialog, item_text, maybe_run_rollover
+from journal.ui.widgets import confirm
+from tests.e2e.harness import YEAR, make_class, make_journal, make_lesson, subject_id
 from tests.ui.conftest import type_text
 
 SURNAMES = [
@@ -52,7 +54,6 @@ STUDENTS = [f"{SURNAMES[i % 20]} {FIRST_NAMES[(3 * i + i // 20) % 10]}" for i in
 assert len(set(STUDENTS)) == 40
 ALL_STUDENT_NAMES = set(STUDENTS)  # S10: жодне з цих імен не має потрапити в журнал помилок
 
-YEAR = "2026-2027"
 ENTER = Qt.Key.Key_Return
 
 
@@ -65,26 +66,6 @@ def button(parent, text: str) -> QPushButton:
     found = [b for b in parent.findChildren(QPushButton) if b.text() == text]
     assert len(found) == 1, f"кнопка «{text}»: знайдено {len(found)} серед {[b.text() for b in parent.findChildren(QPushButton)]}"
     return found[0]
-
-
-def subject_id(session, name: str) -> int:
-    return session.scalars(select(Subject.id).where(Subject.name == name)).one()
-
-
-def make_class(session, teacher_id: int, name: str, year: str = YEAR, students: list[str] | None = None):
-    service = ClassService(session)
-    info = service.create_class(teacher_id, name, year)
-    if students:
-        service.import_students(teacher_id, info.id, "\n".join(students))
-    return info
-
-
-def make_journal(session, teacher_id: int, class_id: int, subject: str = "Алгебра"):
-    return JournalService(session).create_journal(teacher_id, class_id, subject_id(session, subject))
-
-
-def make_lesson(session, teacher_id: int, journal_id: int, d: date, kind: str = "regular", topic: str | None = None):
-    return JournalService(session).create_lesson(teacher_id, journal_id, d, kind, topic)
 
 
 def student_ids(session, teacher_id: int, class_id: int) -> dict[str, int]:
@@ -136,13 +117,13 @@ def grid_cells(session, teacher_id: int, journal_id: int, semester: int = 1):
 
 
 def classes_cards(page) -> list:
-    host = page.scroll.widget()
-    return [] if host is None or page.list_stack.currentIndex() != 0 else host.findChildren(_ClassCard)
+    host = page.list_view.scroll.widget()
+    return [] if host is None or page.list_view.list_stack.currentIndex() != 0 else host.findChildren(_ClassCard)
 
 
 def journal_cards(page) -> list:
-    host = page.scroll.widget()
-    return [] if host is None or page.list_stack.currentIndex() != 0 else host.findChildren(_JournalCard)
+    host = page.list_view.scroll.widget()
+    return [] if host is None or page.list_view.list_stack.currentIndex() != 0 else host.findChildren(_JournalCard)
 
 
 def open_nav(window, row: int):
@@ -161,7 +142,7 @@ def test_s1_class_to_keyboard_entry(window, teacher, session, drive, qtbot, msgs
     tid = teacher.id
 
     # --- клас ---
-    assert classes.list_stack.currentIndex() == 1, "порожній стан сторінки «Класи»"
+    assert classes.list_view.list_stack.currentIndex() == 1, "порожній стан сторінки «Класи»"
 
     def create_class(dlg):
         dlg.name_edit.setText("9-А")
@@ -169,7 +150,7 @@ def test_s1_class_to_keyboard_entry(window, teacher, session, drive, qtbot, msgs
         QTest.keyClick(dlg.name_edit, ENTER)  # Enter = «Створити»
 
     run = drive(create_class)
-    button(classes.list_stack.widget(1), "Новий клас").click()
+    button(classes.list_view.list_stack.widget(1), "Новий клас").click()
     run.check()
     assert not run.stayed_open
     assert [c.name for c in ClassService(session).list_classes(tid)] == ["9-А"]
@@ -231,7 +212,7 @@ def test_s1_class_to_keyboard_entry(window, teacher, session, drive, qtbot, msgs
 
     # --- журнал ---
     open_nav(window, 1)
-    assert journals.list_stack.currentIndex() == 1, "порожній стан сторінки «Журнали»"
+    assert journals.list_view.list_stack.currentIndex() == 1, "порожній стан сторінки «Журнали»"
 
     def new_journal(dlg):
         assert dlg.class_combo.count() == 1 and dlg.class_combo.currentText() == f"9-А · {YEAR}"
@@ -602,7 +583,7 @@ def test_s4_archived_class_and_restore(window, teacher, session, drive, qtbot, m
     run.check()
     assert classes.stack.currentIndex() == 0
     assert sorted(card_title(c) for c in classes_cards(classes)) == ["10-Б"]
-    classes.archived_check.setChecked(True)
+    classes.list_view.archived_check.setChecked(True)
     assert sorted(card_title(c) for c in classes_cards(classes)) == ["10-Б", "9-А"]
     classes.open_class(c9.id)
     assert not classes.restore_class_btn.isHidden()
@@ -615,7 +596,7 @@ def test_s4_archived_class_and_restore(window, teacher, session, drive, qtbot, m
     # --- журнал архівного класу: видно в архіві, уроки й оцінки редагуються, видалення вимкнено ---
     open_nav(window, 1)
     assert [card_title(c) for c in journal_cards(journals)] == ["10-Б · Фізика"]
-    journals.archived_check.setChecked(True)
+    journals.list_view.archived_check.setChecked(True)
     assert sorted(card_title(c) for c in journal_cards(journals)) == ["10-Б · Фізика", "9-А · Алгебра"]
     journals.open_journal(alg.id)
     assert journals.subtitle_label.text() == f"{YEAR} · клас в архіві"
@@ -1240,7 +1221,7 @@ def test_s8_keyboard_only_dialogs(window, teacher, session, drive, qtbot, msgs):
     for page in (classes, journals):
         for key in (ENTER, Qt.Key.Key_Escape):
             run = drive(lambda box, key=key: QTest.keyClick(box, key))
-            assert page._confirm("Видалити все?", "Видалити") is False
+            assert confirm(page, "Видалити все?", "Видалити") is False
             run.check()
             assert not run.stayed_open
     assert [c.name for c in class_service.list_classes(tid)].count("9-А") == 1

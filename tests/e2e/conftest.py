@@ -12,18 +12,15 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"  # до будь-якого імпо
 os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 
 import logging  # noqa: E402
-import sys  # noqa: E402
 import time  # noqa: E402
-from contextlib import contextmanager  # noqa: E402
 from datetime import date  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from journal import db, logging_setup  # noqa: E402
-from journal.models import Teacher  # noqa: E402
 from journal.services.auth_service import CurrentUser  # noqa: E402
 from journal.ui import (  # noqa: E402, F401  (імпорт, щоб `session_scope` у них можна було підмінити)
     class_dialogs,
@@ -37,6 +34,7 @@ from journal.ui import (  # noqa: E402, F401  (імпорт, щоб `session_sco
     theme,
 )
 from journal.ui.main_window import MainWindow  # noqa: E402
+from tests.e2e.harness import add_teacher, redirect_session_scope, savepoint_scope, stub_message_boxes  # noqa: E402
 
 TODAY = date(2026, 11, 12)  # «сьогодні» для всіх сценаріїв: листопад, I семестр 2026-2027
 
@@ -74,15 +72,7 @@ def _only_test_database(engine):
 def _isolation(session, monkeypatch, qapp):
     """Транзакція з відкатом, заморожена дата, світла тема, коротке вікно ланцюжка 1→10/11/12."""
 
-    @contextmanager
-    def scope():
-        with session.begin_nested():
-            yield session
-
-    monkeypatch.setattr(db, "session_scope", scope)
-    for name, module in list(sys.modules.items()):
-        if name.startswith("journal.") and name != "journal.db" and hasattr(module, "session_scope"):
-            monkeypatch.setattr(module, "session_scope", scope)
+    redirect_session_scope(savepoint_scope(session), monkeypatch.setattr)
     for module in (class_dialogs, journals_page, journal_dialogs):
         monkeypatch.setattr(module, "date", _FrozenDate)
     monkeypatch.setattr(journal_grid, "GRADE_CHAIN_MS", 80)
@@ -99,16 +89,7 @@ def _isolation(session, monkeypatch, qapp):
 def msgs(monkeypatch) -> list[tuple[str, str, str]]:
     """Статичні QMessageBox (warning/information/critical) не блокують, а записуються: (вид, заголовок, текст)."""
     seen: list[tuple[str, str, str]] = []
-
-    def recorder(kind: str):
-        def fake(parent=None, title="", text="", *args, **kwargs):
-            seen.append((kind, title, text))
-            return QMessageBox.StandardButton.Ok
-
-        return staticmethod(fake)
-
-    for kind in ("warning", "information", "critical"):
-        monkeypatch.setattr(QMessageBox, kind, recorder(kind))
+    stub_message_boxes(lambda kind, parent, title, text: seen.append((kind, title, text)), monkeypatch.setattr)
     return seen
 
 
@@ -190,10 +171,7 @@ def drive(qapp):
 
 @pytest.fixture
 def teacher(session) -> CurrentUser:
-    row = Teacher(username="demo_teacher", password_hash="x", full_name="Демо Викладач")
-    session.add(row)
-    session.flush()
-    return CurrentUser(row.id, row.username, row.full_name)
+    return add_teacher(session)
 
 
 @pytest.fixture

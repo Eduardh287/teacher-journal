@@ -1,11 +1,11 @@
 """Діалоги першої реєстрації та входу викладача."""
-import logging
 from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QWidget
 
+from journal.logging_setup import log_failure
 from journal.services.auth_service import AuthError, AuthService, CurrentUser
 from journal.ui.service_scope import service_scope
 from journal.ui.widgets import FormDialog, brand_mark, button, field, label
@@ -218,7 +218,7 @@ class LoginDialog(_AuthDialog):
             if code:
                 show_recovery_code(self, code, lead_in=LEGACY_CODE_LEAD_IN)
         except Exception:
-            logging.exception("Не вдалося видати код відновлення")
+            log_failure("Не вдалося видати код відновлення")
 
 
 class ForgotPasswordDialog(_AuthDialog):

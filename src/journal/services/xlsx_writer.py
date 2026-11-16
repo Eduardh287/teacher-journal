@@ -65,11 +65,9 @@ def build_workbook(table: ExportTable) -> Workbook:
         ws.merge_cells(start_row=3, start_column=column, end_row=4, end_column=column)
         head = ws.cell(3, column)
         _put(head, text)
-        head.font = Font(bold=True)
-        head.alignment = _CENTER
-        for row in (3, 4):
-            ws.cell(row, column).border = _BORDER
-            ws.cell(row, column).fill = _HEADER_FILL
+        _style_head(head)
+        ws.cell(4, column).border = _BORDER
+        ws.cell(4, column).fill = _HEADER_FILL
 
     for offset, column in enumerate(table.columns):
         index = FIRST_GRADE_COLUMN + offset
@@ -77,12 +75,8 @@ def build_workbook(table: ExportTable) -> Workbook:
         top, bottom = ws.cell(3, index), ws.cell(4, index)
         _put(top, column.header)
         _put(bottom, column.date_text or None)
-        top.font = Font(bold=True)
-        bottom.font = Font(size=9, color="555555")
-        for head in (top, bottom):
-            head.alignment = _CENTER
-            head.border = _BORDER
-            head.fill = fill
+        _style_head(top, fill)
+        _style_head(bottom, fill, Font(size=9, color="555555"))
         ws.column_dimensions[get_column_letter(index)].width = GRADE_COLUMN_WIDTH
 
     for number, row in enumerate(table.rows, start=HEADER_ROWS + 1):
@@ -110,23 +104,32 @@ def build_workbook(table: ExportTable) -> Workbook:
     ws.column_dimensions["A"].width = 5
     ws.column_dimensions["B"].width = 32
     ws.freeze_panes = ws.cell(HEADER_ROWS + 1, FIRST_GRADE_COLUMN).coordinate  # C5
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.print_title_rows = f"3:{HEADER_ROWS}"
+    _landscape(ws, f"3:{HEADER_ROWS}")
 
     _lessons_sheet(wb.create_sheet(SHEET_LESSONS), table)
     return wb
 
 
+def _style_head(cell, fill=_HEADER_FILL, font: Font | None = None) -> None:
+    """Клітинка заголовка: жирний (або вказаний) шрифт, по центру, рамка, тло."""
+    cell.font = font or Font(bold=True)
+    cell.alignment = _CENTER
+    cell.border = _BORDER
+    cell.fill = fill
+
+
+def _landscape(ws, title_rows: str) -> None:
+    """Друк: альбомна орієнтація, на всю ширину сторінки, заголовок на кожній сторінці."""
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.print_title_rows = title_rows
+
+
 def _lessons_sheet(ws, table: ExportTable) -> None:
     for column, text in enumerate(("№", "Дата", "Тип", "Тема", "Домашнє завдання"), start=1):
-        head = ws.cell(1, column, text)
-        head.font = Font(bold=True)
-        head.alignment = _CENTER
-        head.border = _BORDER
-        head.fill = _HEADER_FILL
+        _style_head(ws.cell(1, column, text))
     for number, lesson in enumerate(table.lessons, start=2):
         values = (lesson.number, f"{lesson.lesson_date:%d.%m.%Y}", lesson.type_name, lesson.topic, lesson.homework)
         for column, value in enumerate(values, start=1):
@@ -137,11 +140,7 @@ def _lessons_sheet(ws, table: ExportTable) -> None:
     for column, width in zip("ABCDE", (6, 12, 22, 45, 45), strict=True):
         ws.column_dimensions[column].width = width
     ws.freeze_panes = "A2"
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.print_title_rows = "1:1"
+    _landscape(ws, "1:1")
 
 
 def write_export(table: ExportTable, path: str | Path) -> Path:

@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.services.journal_types import MAX_HOMEWORK, ExtraColumnInfo, LessonInfo
+from journal.services.grid_text import EXTRA_COLUMN_TYPES, LESSON_TYPES
+from journal.services.journal_types import MAX_HOMEWORK, ExtraColumnInfo, GridColumn, LessonInfo
 from journal.ui import theme
-from journal.ui.journal_dialogs import EXTRA_COLUMN_TYPES, LESSON_TYPES
 
 NUMBER_WIDTH = 36
 DATE_WIDTH = 56
@@ -37,10 +37,6 @@ TEXT_PADDING = 4  # відступ усередині клітинки (як у 
 TEXT_SLACK = 10   # запас по ширині на переноси й межу клітинки
 
 _SEPARATOR_ROLE = Qt.ItemDataRole.UserRole + 1  # True у клітинках рядка-роздільника
-# Порядок стовпчиків без дати при однаковій даті: уроки → «Зошит» → «Тематична»
-_KIND_ORDER = {"notebook": 0, "thematic": 1}
-
-
 def lesson_row_text(lesson: LessonInfo) -> str:
     """Текст стовпця «Тема»: для звичайного уроку — тема (або порожньо), для решти — «Тип: тема»."""
     topic = lesson.topic or ""
@@ -53,30 +49,21 @@ def lesson_row_text(lesson: LessonInfo) -> str:
 def merge_rows(
     lessons: list[LessonInfo],
     extra_columns: list[ExtraColumnInfo],
-    columns: list | None = None,
+    columns: list[GridColumn],
 ) -> list[LessonInfo | ExtraColumnInfo]:
     """Уроки й стовпчики без дати в порядку таблиці.
 
-    columns — GridData.columns (авторитетний порядок від сервісу: стовпчик стоїть одразу після
-    уроку, після якого його додали). Без columns — запасний порядок за датою (старі тести).
+    columns — GridData.columns (порядок від сервісу: стовпчик стоїть одразу після
+    уроку, після якого його додали).
     """
-    if columns:
-        lesson_by_id = {lesson.id: lesson for lesson in lessons}
-        extra_by_id = {column.id: column for column in extra_columns}
-        merged: list[LessonInfo | ExtraColumnInfo] = []
-        for column in columns:
-            if column.kind == "lesson" and column.id in lesson_by_id:
-                merged.append(lesson_by_id[column.id])
-            elif column.kind in ("thematic", "notebook") and column.id in extra_by_id:
-                merged.append(extra_by_id[column.id])
-        return merged
-    pending = sorted(extra_columns, key=lambda c: (c.after_date, _KIND_ORDER.get(c.kind, 9), c.id))
-    merged = []
-    for lesson in lessons:
-        while pending and pending[0].after_date < lesson.lesson_date:
-            merged.append(pending.pop(0))
-        merged.append(lesson)
-    merged.extend(pending)
+    lesson_by_id = {lesson.id: lesson for lesson in lessons}
+    extra_by_id = {column.id: column for column in extra_columns}
+    merged: list[LessonInfo | ExtraColumnInfo] = []
+    for column in columns:
+        if column.kind == "lesson" and column.id in lesson_by_id:
+            merged.append(lesson_by_id[column.id])
+        elif column.kind in ("thematic", "notebook") and column.id in extra_by_id:
+            merged.append(extra_by_id[column.id])
     return merged
 
 
@@ -210,7 +197,7 @@ class LessonPanel(QWidget):
         self,
         lessons: list[LessonInfo],
         extra_columns: list[ExtraColumnInfo],
-        columns: list | None = None,
+        columns: list[GridColumn],
     ) -> None:
         """Перебудовує список (єдина точка оновлення); columns — порядок GridData.columns."""
         self._lessons = list(lessons)
@@ -229,11 +216,9 @@ class LessonPanel(QWidget):
         table.setRowCount(0)
         table.setRowCount(len(self._rows))
         muted = QBrush(QColor(theme.color("muted")))
-        position = 0  # запасний номер, якщо сервіс не заповнив LessonInfo.number
         for row, entry in enumerate(self._rows):
             if isinstance(entry, LessonInfo):
-                position += 1
-                self._fill_lesson_row(row, entry, entry.number or position, muted)
+                self._fill_lesson_row(row, entry, entry.number, muted)
             else:
                 self._fill_separator_row(row, entry, muted)
         table.blockSignals(False)
@@ -405,22 +390,9 @@ class LessonPanel(QWidget):
             return
         menu = QMenu(self)
         if isinstance(entry, LessonInfo):
-            edit = menu.addAction("Редагувати урок")
-            delete = menu.addAction("Видалити урок")
-            move = None
+            menu.addAction("Редагувати урок", lambda: self.lesson_edit_requested.emit(entry.id))
+            menu.addAction("Видалити урок", lambda: self.lesson_delete_requested.emit(entry.id))
         else:
-            move = menu.addAction("Перемістити…")
-            delete = menu.addAction("Видалити")
-            edit = None
-        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
-        if chosen is None:
-            return
-        if isinstance(entry, LessonInfo):
-            if chosen is edit:
-                self.lesson_edit_requested.emit(entry.id)
-            elif chosen is delete:
-                self.lesson_delete_requested.emit(entry.id)
-        elif chosen is move:
-            self.column_move_requested.emit(entry.id)
-        elif chosen is delete:
-            self.column_delete_requested.emit(entry.id)
+            menu.addAction("Перемістити…", lambda: self.column_move_requested.emit(entry.id))
+            menu.addAction("Видалити", lambda: self.column_delete_requested.emit(entry.id))
+        menu.exec(self.table.viewport().mapToGlobal(pos))

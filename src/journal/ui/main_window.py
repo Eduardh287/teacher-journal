@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from journal.logging_setup import log_failure
 from journal.services.auth_service import CurrentUser
 from journal.version import app_version
 from journal.ui import icons, theme
@@ -248,8 +249,6 @@ class MainWindow(QMainWindow):
             try:
                 self._exit_backup(self)
             except Exception:  # noqa: BLE001 — програма ніколи не мусить «застрягти» на виході
-                from journal.logging_setup import log_failure
-
                 log_failure("Помилка автоматичної копії при виході")
         super().closeEvent(event)
 

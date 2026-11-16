@@ -3,7 +3,6 @@
 UI працює лише з JournalApi (через api_factory) та його DTO. За замовчуванням кожен виклик —
 окрема транзакція ui.service_scope. JournalError ловимо ПОЗА блоком with (відкат).
 """
-import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from functools import partial
@@ -25,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from journal.logging_setup import log_failure
 from journal.services.auth_service import CurrentUser
 from journal.services.grid_text import plural
 from journal.services.journal_service import JournalService
@@ -47,7 +47,7 @@ from journal.ui.journal_dialogs import DeleteJournalDialog, JournalSettingsDialo
 from journal.ui.journal_grid import JournalGridView
 from journal.ui.lesson_panel import LessonPanel
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import CardListView, EntityCard, button, confirm, empty_state, error_label, label, segment_button
+from journal.ui.widgets import CardListView, EmptyState, EntityCard, button, confirm, error_label, label, segment_button
 
 PANEL_WIDTH = 340  # початкова ширина панелі уроків
 PANEL_MIN_WIDTH = 260
@@ -118,7 +118,7 @@ class JournalsPage(QWidget):
                 self._report(str(error), banner)
             return False, None
         except Exception:
-            logging.exception("Помилка під час роботи з журналами")
+            log_failure("Помилка під час роботи з журналами")
             self._report(GENERIC_ERROR_TEXT, banner)
             return False, None
         return True, result
@@ -134,15 +134,12 @@ class JournalsPage(QWidget):
         self.banner.show()
         self._banner_timer.start(BANNER_MS)
 
-    def _confirm(self, text: str, accept_text: str) -> bool:
-        return confirm(self, text, accept_text)
-
     # ------------------------------------------------------------------
     # Список журналів
     # ------------------------------------------------------------------
 
     def _build_list_view(self) -> QWidget:
-        empty = empty_state(
+        empty = EmptyState(
             "Ще немає жодного журналу",
             "Створіть журнал для свого класу й предмета.",
             ("Новий журнал", self._on_new_journal),
@@ -157,7 +154,6 @@ class JournalsPage(QWidget):
             empty,
         )
         self.list_view = view
-        self.archived_check, self.list_stack, self.scroll = view.archived_check, view.list_stack, view.scroll
         self.new_journal_btn = view.new_button
         self._icon_refreshers.append(
             lambda: view.new_button.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
@@ -168,7 +164,7 @@ class JournalsPage(QWidget):
         """Перемикає на список і заново будує картки."""
         self.grid_view.flush_pending()
         self._journal_id = None
-        ok, journals = self._call(lambda api: api.list_journals(self.teacher_id, self.archived_check.isChecked()))
+        ok, journals = self._call(lambda api: api.list_journals(self.teacher_id, self.list_view.archived_check.isChecked()))
         journals = journals if ok else []
         cards = [_JournalCard(info) for info in journals]
         for journal_card, info in zip(cards, journals):
@@ -285,7 +281,7 @@ class JournalsPage(QWidget):
         self.splitter.setSizes([10000, PANEL_WIDTH])
         self.content_stack.addWidget(self.splitter)  # 0
 
-        empty = empty_state("", "Додайте учнів на сторінці «Класи».", ("Новий урок", self._on_new_lesson))
+        empty = EmptyState("", "Додайте учнів на сторінці «Класи».", ("Новий урок", self._on_new_lesson))
         self.empty_label, self.empty_hint, self.empty_lesson_btn = empty.title_label, empty.hint_label, empty.action
         self.empty_hint.hide()
         self.content_stack.addWidget(empty)  # 1
@@ -474,7 +470,7 @@ class JournalsPage(QWidget):
         if extra is None or not lessons:
             return
         items = [
-            f"{lesson.number or i}. {lesson.lesson_date:%d.%m}" + (f" · {lesson.topic}" if lesson.topic else "")
+            f"{lesson.number}. {lesson.lesson_date:%d.%m}" + (f" · {lesson.topic}" if lesson.topic else "")
             for i, lesson in enumerate(lessons, start=1)
         ]
         # Нинішнє місце — останній урок перед стовпчиком у порядку відображення (GridData.columns).
@@ -505,13 +501,13 @@ class JournalsPage(QWidget):
         if extra.kind == "notebook":
             # «Зошит» з оцінками не видаляється: причину (з кількістю) каже сервіс.
             graded = sum(1 for (_, key), c in model.computed.items() if key == ("notebook", column_id) and c.value)
-            if max(extra.grade_count, graded) == 0 and not self._confirm(
+            if max(extra.grade_count, graded) == 0 and not confirm(self, 
                 f"Видалити стовпчик «Зошит» № {extra.ordinal}?", "Видалити"
             ):
                 return
             ok, _ = self._call(lambda api: api.delete_column(self.teacher_id, column_id), banner=True, inform=True)
         else:
-            if not self._confirm(
+            if not confirm(self, 
                 f"Видалити тематичну № {extra.ordinal}? Оцінки, виставлені в ній вручну, зникнуть.", "Видалити"
             ):
                 return
@@ -582,7 +578,7 @@ class JournalsPage(QWidget):
         # завантаження: оцінки, щойно введені з клавіатури, теж мають захищати урок.
         live_count = sum(1 for (_, lid) in self.grid_view.grid_model.cells if lid == lesson_id)
         # Урок з відмітками не видаляється (рішення викладачки): причину каже сервіс — показуємо її як є.
-        if max(lesson.entry_count, live_count) == 0 and not self._confirm(
+        if max(lesson.entry_count, live_count) == 0 and not confirm(self, 
             f"Видалити урок {lesson.lesson_date:%d.%m.%Y}?", "Видалити"
         ):
             return
@@ -621,7 +617,7 @@ class JournalsPage(QWidget):
             return
         if fresh.lesson_count == 0:
             text = f"Видалити журнал «{info.class_name} · {info.subject_name}»? Цю дію не можна скасувати."
-            if not self._confirm(text, "Видалити"):
+            if not confirm(self, text, "Видалити"):
                 return
         elif DeleteJournalDialog(info, fresh.lesson_count, parent=self).exec() != QDialog.DialogCode.Accepted:
             return

@@ -16,11 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from journal.services.grid_text import (  # noqa: F401 (реекспорт для ui)
-    EXTRA_COLUMN_TYPES,
-    FINAL_COLUMN_TITLES,
-    LESSON_TYPES,
-)
+from journal.services.grid_text import EXTRA_COLUMN_TYPES, LESSON_TYPES
 from journal.services.journal_types import (
     MAX_COMMENT,
     MAX_HOMEWORK,
@@ -36,7 +32,8 @@ from journal.services.journal_types import (
 )
 from journal.services.semesters import SemesterBoundaries, SemesterError
 from journal.ui import theme
-from journal.ui.widgets import FormDialog, SemesterBoundsEditor, button, conflict_text, field, label
+from journal.ui.semester_widgets import SemesterBoundsEditor, conflict_text
+from journal.ui.widgets import FormDialog, button, field, label
 
 ApiFactory = Callable[[], AbstractContextManager[JournalApi]]
 
@@ -94,8 +91,7 @@ class NewJournalDialog(_ApiDialog):
         else:
             self.body.addWidget(self.hint_label)
             self.body.addWidget(self.error_label)
-            self.submit_button = button("Створити", variant="primary")  # у вікно не додається
-            self.submit_button.setEnabled(False)
+            self.submit_button = None  # немає чого створювати: лише «Закрити»
             close_button = button("Закрити")
             close_button.clicked.connect(self.reject)
             self.body.addWidget(close_button)

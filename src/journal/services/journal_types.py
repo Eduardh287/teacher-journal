@@ -4,7 +4,7 @@
 обидві сторони пишуться окремо й паралельно, але проти однакових типів.
 Специфікації: docs/specs/stage-5.md, docs/specs/stage-6.md.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Protocol
 
@@ -72,7 +72,7 @@ class JournalInfo:
     subject_name: str
     class_archived: bool
     lesson_count: int
-    boundaries: SemesterBoundaries = DEFAULT_BOUNDARIES  # межі семестрів цього журналу
+    boundaries: SemesterBoundaries  # межі семестрів цього журналу
 
 
 @dataclass(frozen=True)
@@ -94,8 +94,8 @@ class LessonInfo:
     lesson_type: LessonTypeCode
     topic: str | None
     entry_count: int
-    homework: str | None = None
-    number: int = 0  # наскрізний номер уроку за навчальний рік (1-based; лише уроки з датою)
+    homework: str | None
+    number: int  # наскрізний номер уроку за навчальний рік (1-based; лише уроки з датою)
 
 
 @dataclass(frozen=True)
@@ -177,10 +177,9 @@ class GridData:
     students: list[StudentInfo]
     lessons: list[LessonInfo]
     cells: dict[tuple[int, int], CellInfo]
-    # Етап 6 (значення за замовчуванням — щоб старий код і фейки не ламалися):
-    columns: list[GridColumn] = field(default_factory=list)  # уроки + extra-стовпчики за порядком, далі підсумкові
-    extra_columns: list[ExtraColumnInfo] = field(default_factory=list)
-    computed: dict[tuple[int, ComputedKey], ComputedCell] = field(default_factory=dict)  # (student_id, key)
+    columns: list[GridColumn]  # уроки + extra-стовпчики за порядком, далі підсумкові
+    extra_columns: list[ExtraColumnInfo]
+    computed: dict[tuple[int, ComputedKey], ComputedCell]  # (student_id, key)
 
 
 class JournalApi(Protocol):

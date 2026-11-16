@@ -5,8 +5,9 @@ from datetime import date
 import pytest
 from PySide6.QtWidgets import QLabel
 
+from journal.services.grid_text import EXTRA_COLUMN_TYPES, FINAL_COLUMN_TITLES, LESSON_TYPES
 from journal.services.journal_types import MAX_HOMEWORK, ExtraColumnInfo, JournalError, LessonInfo
-from journal.ui.journal_dialogs import EXTRA_COLUMN_TYPES, FINAL_COLUMN_TITLES, LESSON_TYPES, LessonDialog
+from journal.ui.journal_dialogs import LessonDialog
 
 
 class StubApi:

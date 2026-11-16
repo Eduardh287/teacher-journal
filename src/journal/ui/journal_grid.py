@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from journal.services.class_service import StudentInfo
-from journal.services.grid_text import (  # noqa: F401 (cell_text, computed_text — публічні імена модуля)
+from journal.services.grid_text import (
     EXTRA_COLUMN_TYPES,
     FINAL_COLUMN_TITLES,
     LESSON_TYPES,
@@ -132,7 +132,7 @@ class JournalGridModel(QAbstractTableModel):
         self.students = list(grid.students)
         self.lessons = list(grid.lessons)
         self._lessons_by_id = {lesson.id: lesson for lesson in grid.lessons}
-        self.columns = list(grid.columns) or [GridColumn("lesson", lesson.id) for lesson in grid.lessons]
+        self.columns = list(grid.columns)
         self.extras = {e.id: e for e in grid.extra_columns}
         self.semester = grid.semester
         self.cells = dict(grid.cells)
@@ -273,8 +273,7 @@ class JournalGridModel(QAbstractTableModel):
                 return lesson
             if role == Qt.ItemDataRole.ToolTipRole:
                 name = LESSON_TYPES[lesson.lesson_type][0]
-                number = lesson.number or self.lessons.index(lesson) + 1
-                text = f"Урок № {number} · {lesson.lesson_date:%d.%m.%Y} · {name}"
+                text = f"Урок № {lesson.number} · {lesson.lesson_date:%d.%m.%Y} · {name}"
                 text = f"{text}\n{lesson.topic}" if lesson.topic else text
                 return f"{text}\nДомашнє завдання: {lesson.homework}" if lesson.homework else text
             return None
@@ -695,15 +694,9 @@ class JournalGridView(QTableView):
             return
         menu = QMenu(self)
         if column.kind == "lesson":
-            first = menu.addAction("Редагувати урок")
-            second = menu.addAction("Видалити урок")
+            menu.addAction("Редагувати урок", lambda: self.lesson_edit_requested.emit(column.id))
+            menu.addAction("Видалити урок", lambda: self.lesson_delete_requested.emit(column.id))
         else:
-            first = menu.addAction("Перемістити…")
-            second = menu.addAction("Видалити")
-        chosen = menu.exec(self.horizontalHeader().mapToGlobal(pos))
-        if chosen is None:
-            return
-        if column.kind == "lesson":
-            (self.lesson_edit_requested if chosen is first else self.lesson_delete_requested).emit(column.id)
-        else:
-            (self.column_move_requested if chosen is first else self.column_delete_requested).emit(column.id)
+            menu.addAction("Перемістити…", lambda: self.column_move_requested.emit(column.id))
+            menu.addAction("Видалити", lambda: self.column_delete_requested.emit(column.id))
+        menu.exec(self.horizontalHeader().mapToGlobal(pos))

@@ -43,12 +43,12 @@ def skip_if_vacation():
 
 def test_header_text_for_each_lesson_type():
     d = date(2025, 9, 2)
-    assert header_text(LessonInfo(1, d, 1, "regular", None, 0)) == "02.09"
-    assert header_text(LessonInfo(1, d, 1, "test", None, 0)) == "02.09\nКР"
-    assert header_text(LessonInfo(1, d, 1, "lab", None, 0)) == "02.09\nЛР"
-    assert header_text(LessonInfo(1, d, 1, "independent", None, 0)) == "02.09\nСР"
-    assert header_text(LessonInfo(1, d, 1, "quiz", None, 0)) == "02.09\nТ"
-    assert header_text(LessonInfo(1, d, 1, "project", None, 0)) == "02.09\nПр"
+    assert header_text(LessonInfo(1, d, 1, "regular", None, 0, None, 1)) == "02.09"
+    assert header_text(LessonInfo(1, d, 1, "test", None, 0, None, 1)) == "02.09\nКР"
+    assert header_text(LessonInfo(1, d, 1, "lab", None, 0, None, 1)) == "02.09\nЛР"
+    assert header_text(LessonInfo(1, d, 1, "independent", None, 0, None, 1)) == "02.09\nСР"
+    assert header_text(LessonInfo(1, d, 1, "quiz", None, 0, None, 1)) == "02.09\nТ"
+    assert header_text(LessonInfo(1, d, 1, "project", None, 0, None, 1)) == "02.09\nПр"
 
 
 def test_grid_layout(page):
@@ -327,7 +327,7 @@ def test_ctrl_n_error_shows_banner(page, fake):
 
 
 def test_delete_lesson_without_marks_uses_simple_confirm(page, fake, monkeypatch):
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: True)
     page._on_delete_lesson(L1)
     assert fake.calls_of("delete_lesson") == [("delete_lesson", L1)]
     assert page.grid_view.grid_model.columnCount() == 2  # 1 урок + «Сем.»
@@ -339,7 +339,7 @@ def test_delete_lesson_with_marks_is_refused_with_service_text(page, fake, monke
     page.reload_grid()
     shown = []
     monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text, *a: shown.append(text))
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("підтвердження замість відмови"))
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: pytest.fail("підтвердження замість відмови"))
     page._on_delete_lesson(L1)
     assert len(shown) == 1 and "Урок має оцінки чи позначки (1)" in shown[0] and "Спершу очистьте" in shown[0]
     assert page.grid_view.grid_model.column_of(L1) >= 0  # урок лишився в таблиці
@@ -382,16 +382,16 @@ def test_no_students_empty_state(make_page):
 
 def test_list_view_and_empty_list(page, fake):
     page.show_list()
-    assert page.stack.currentIndex() == 0 and page.list_stack.currentIndex() == 0
+    assert page.stack.currentIndex() == 0 and page.list_view.list_stack.currentIndex() == 0
     fake.journals.clear()
     page.show_list()
-    assert page.list_stack.currentIndex() == 1
+    assert page.list_view.list_stack.currentIndex() == 1
 
 
 def test_new_journal_dialog_without_candidates_shows_hint(page, qtbot):
     dialog = journal_dialogs.NewJournalDialog(1, page._api_factory)
     qtbot.addWidget(dialog)
-    assert not dialog.submit_button.isEnabled()
+    assert dialog.submit_button is None
     assert "Спершу створіть клас" in dialog.hint_label.text()
 
 
@@ -429,7 +429,7 @@ def test_delete_lesson_with_fresh_keyboard_marks_is_refused(page, fake, monkeypa
     assert len(fake.calls_of("set_cell")) == 2
     shown = []
     monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text, *a: shown.append(text))
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("простий діалог замість відмови"))
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: pytest.fail("простий діалог замість відмови"))
     page._on_delete_lesson(L1)  # без reload_grid()
     assert len(shown) == 1 and "(2)" in shown[0]
     assert len(fake.calls_of("delete_lesson")) == 1  # відмову дає сервіс, а не інтерфейс

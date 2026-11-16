@@ -219,7 +219,7 @@ class JournalService:
         homework: str | None = None,
     ) -> LessonInfo:
         journal = self._own_journal(teacher_id, journal_id)
-        semester = _check_date(journal, lesson_date)
+        semester = _check_date(boundaries_of(journal), journal.school_class.school_year, lesson_date)
         lesson = Lesson(
             journal_id=journal_id,
             lesson_date=lesson_date,
@@ -241,7 +241,9 @@ class JournalService:
         homework: str | None = None,
     ) -> LessonInfo:
         lesson = self._own_lesson(teacher_id, lesson_id)
-        semester = _check_date(lesson.journal, lesson_date)
+        semester = _check_date(
+            boundaries_of(lesson.journal), lesson.journal.school_class.school_year, lesson_date
+        )
         new_type = _enum(LessonType, lesson_type, "Невідомий тип уроку")  # усю перевірку — до першого присвоєння
         topic, homework = _clean_topic(topic), _clean_homework(homework)
         lesson.lesson_date, lesson.semester, lesson.lesson_type = lesson_date, semester, new_type
@@ -655,11 +657,9 @@ def _attach(column: ExtraColumn, lesson: Lesson) -> None:
     column.semester = lesson.semester
 
 
-def _check_date(journal: Journal, lesson_date: date) -> int:
+def _check_date(boundaries: SemesterBoundaries, year: str, lesson_date: date) -> int:
     """Семестр за датою й межами журналу; дата має лежати в навчальному році класу."""
-    boundaries = boundaries_of(journal)
     semester = semester_for_date(lesson_date, boundaries)  # канікули → JournalError
-    year = journal.school_class.school_year
     if not boundaries.contains(year, lesson_date):
         raise JournalError(f"Дата не належить навчальному року {year}")
     return semester

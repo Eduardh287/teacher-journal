@@ -6,6 +6,8 @@
 
 Правила: лише TEST_DATABASE_URL (ім'я бази закінчується на _test); усе в одній зовнішній транзакції,
 яка відкочується; вигадані імена; модальні вікна підмінені, тому нічого не блокується.
+Каталог знімків: змінна QA_SHOTS (за замовчуванням docs/screenshots/qa; його PNG перед запуском видаляються).
+Спільна обв'язка (session_scope на SAVEPOINT, підміна QMessageBox, будівники даних) — tests/e2e/harness.py.
 """
 import faulthandler
 import json
@@ -13,7 +15,6 @@ import os
 import random
 import re
 import sys
-from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -21,6 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))  # tests.e2e.harness
 sys.stdout.reconfigure(encoding="utf-8")
 faulthandler.dump_traceback_later(840, exit=True)  # страховка від зависання
 
@@ -46,7 +48,6 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from journal import db  # noqa: E402
 from journal.config import get_test_database_url  # noqa: E402
-from journal.models import Teacher  # noqa: E402
 from journal.services.auth_service import CurrentUser  # noqa: E402
 from journal.services.class_service import ClassService  # noqa: E402
 from journal.services.journal_service import JournalService  # noqa: E402
@@ -64,8 +65,9 @@ from journal.ui.journal_dialogs import (  # noqa: E402
 from journal.ui.journals_page import default_api_factory  # noqa: E402
 from journal.ui.main_window import MainWindow  # noqa: E402
 from journal.ui.rollover_dialog import RolloverDialog  # noqa: E402
+from tests.e2e import harness  # noqa: E402
 
-OUT_DIR = ROOT / "docs" / "screenshots" / "qa"
+OUT_DIR = Path(os.environ.get("QA_SHOTS") or ROOT / "docs" / "screenshots" / "qa")
 THEMES = ("light", "dark")
 YEAR = "2026-2027"
 
@@ -79,21 +81,8 @@ engine = create_engine(url, hide_parameters=True)
 db.init_engine(url)  # про всяк випадок: будь-який «забутий» session_scope теж іде в тестову базу
 connection = engine.connect()
 outer = connection.begin()
-
-
-@contextmanager
-def fake_scope():
-    """Те саме, що journal.db.session_scope, але всередині зовнішньої транзакції (SAVEPOINT)."""
-    with Session(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False) as s, s.begin():
-        yield s
-
-
-import journal.ui.main_window  # noqa: E402,F401  (щоб усі модулі були в sys.modules)
-
-db.session_scope = fake_scope
-for _name, _mod in list(sys.modules.items()):
-    if _name.startswith("journal.") and hasattr(_mod, "session_scope"):
-        _mod.session_scope = fake_scope
+sess = Session(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False)
+harness.redirect_session_scope(harness.savepoint_scope(sess))
 
 # ---------------------------------------------------------------------------
 # Qt: застосунок і підміна модальних вікон
@@ -110,20 +99,22 @@ def _fake_dialog_exec(self, *args):
     return 0
 
 
-def _fake_message(kind):
-    def fn(parent, title, text, *a, **k):
-        box = QMessageBox(kind, title, text, parent=parent)
-        box.show()
-        LAST["box"] = box
-        return QMessageBox.StandardButton.Ok
+_ICONS = {
+    "warning": QMessageBox.Icon.Warning,
+    "information": QMessageBox.Icon.Information,
+    "critical": QMessageBox.Icon.Critical,
+}
 
-    return staticmethod(fn)
+
+def _show_message(kind, parent, title, text):
+    box = QMessageBox(_ICONS[kind], title, text, parent=parent)
+    box.show()
+    LAST["box"] = box
 
 
 QDialog.exec = _fake_dialog_exec
 QMessageBox.exec = _fake_dialog_exec
-QMessageBox.warning = _fake_message(QMessageBox.Icon.Warning)
-QMessageBox.information = _fake_message(QMessageBox.Icon.Information)
+harness.stub_message_boxes(_show_message)
 
 # ---------------------------------------------------------------------------
 # Знімки та автоматичні перевірки
@@ -290,7 +281,6 @@ EXTRA_SUBJECTS = [
     "Основи здоров'я", "Природознавство", "Захист України", "Громадянська освіта", "Астрономія", "Трудове навчання",
 ]
 
-sess = Session(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False)
 cs, js, ss = ClassService(sess), JournalService(sess), SubjectService(sess)
 SUBJECT = {s.name: s.id for s in ss.list_subjects()}
 _teacher_no = [0]
@@ -298,22 +288,16 @@ _teacher_no = [0]
 
 def make_teacher(full_name: str) -> CurrentUser:
     _teacher_no[0] += 1
-    teacher = Teacher(username=f"qa_demo_{_teacher_no[0]}", password_hash="x", full_name=full_name)
-    sess.add(teacher)
-    sess.flush()
-    return CurrentUser(teacher.id, teacher.username, teacher.full_name)
+    return harness.add_teacher(sess, f"qa_demo_{_teacher_no[0]}", full_name)
 
 
 def make_class(user, name, students=0, offset=0, year=YEAR):
-    info = cs.create_class(user.id, name, year)
-    if students:
-        cs.import_students(user.id, info.id, "\n".join(NAMES[(offset + i) % len(NAMES)] for i in range(students)))
-    sess.flush()
-    return info
+    names = [NAMES[(offset + i) % len(NAMES)] for i in range(students)]
+    return harness.make_class(sess, user.id, name, year, names)
 
 
 def make_journal(user, class_id, subject):
-    return js.create_journal(user.id, class_id, SUBJECT[subject])
+    return harness.make_journal(sess, user.id, class_id, subject)
 
 
 def lesson_dates(start: date, count: int, weekdays=(0, 2, 4)) -> list[date]:
@@ -512,7 +496,7 @@ state("classes_six_min", lambda: window(T, 0), size=(1100, 700), themes=("light"
 
 def build_classes_archived():
     w = window(T, 0)
-    w.classes_page.archived_check.setChecked(True)
+    w.classes_page.list_view.archived_check.setChecked(True)
     return w
 
 
@@ -597,7 +581,7 @@ state("journals_cards_min", lambda: window(T, 1), size=(1100, 700), themes=("lig
 
 def build_journals_archived():
     w = window(T, 1)
-    w.journals_page.archived_check.setChecked(True)
+    w.journals_page.list_view.archived_check.setChecked(True)
     return w
 
 

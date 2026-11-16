@@ -3,7 +3,6 @@
 UI працює з RolloverService лише через service_factory (за замовчуванням — окрема транзакція
 ui.service_scope). Специфікація: docs/specs/stage-5.2.md.
 """
-import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from functools import partial
@@ -12,6 +11,7 @@ from typing import Any, Protocol
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QMessageBox, QWidget
 
+from journal.logging_setup import log_failure
 from journal.services.grid_text import plural
 from journal.services.rollover_service import RolloverItem, RolloverService
 from journal.ui.service_scope import service_scope
@@ -105,7 +105,7 @@ def maybe_run_rollover(
         with factory() as service:
             items = service.plan(teacher_id, today)
     except Exception:
-        logging.exception("Не вдалося підготувати перехід на новий навчальний рік")
+        log_failure("Не вдалося підготувати перехід на новий навчальний рік")
         return False
     if not items:
         return False
@@ -118,7 +118,7 @@ def maybe_run_rollover(
         with factory() as service:
             service.apply(teacher_id, today, copy_journals=copy_journals)
     except Exception:
-        logging.exception("Помилка під час переходу на новий навчальний рік")
+        log_failure("Помилка під час переходу на новий навчальний рік")
         QMessageBox.warning(parent, "Не вдалося виконати дію", ERROR_TEXT)
         return False
     _refresh_pages(window)

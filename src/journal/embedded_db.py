@@ -509,6 +509,15 @@ def current_revision(url: str) -> str | None:
     return row[0] if row else None
 
 
+def schema_is_current(url: str) -> bool:
+    """Схема вже на останній ревізії — міграції (і Alembic) не потрібні. Будь-який збій — False:
+    тоді працює повний шлях із копією й суворою обробкою помилок."""
+    try:
+        return current_revision(url) == script_head()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def backup_before_migration(url: str) -> None:
     """Якщо схема стара — копія `before-migration` у типову папку; без копії міграції не буде.
 
@@ -561,8 +570,9 @@ def ensure_running() -> str:
     db = EmbeddedDb(layout)
     try:
         url = db.ensure_running()
-        backup_before_migration(url)
-        upgrade_schema(url)
+        if not schema_is_current(url):
+            backup_before_migration(url)
+            upgrade_schema(url)
     except BaseException:
         try:
             db.stop()

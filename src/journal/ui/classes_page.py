@@ -4,7 +4,6 @@ UI працює лише з ClassService (через ui.service_scope) та йо
 Кожен виклик сервісу — окрема транзакція; ClassError ловимо ПОЗА блоком with,
 щоб транзакція відкотилась, і показуємо його користувачу.
 """
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -24,14 +23,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from journal.logging_setup import log_failure
 from journal.services.auth_service import CurrentUser
 from journal.services.class_service import ClassError, ClassInfo, ClassService, StudentInfo
 from journal.services.grid_text import plural
 from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
+from journal.ui.semester_widgets import conflict_text
 from journal.ui.service_scope import service_scope
-from journal.ui.widgets import CardListView, EntityCard, button, confirm, conflict_text, empty_state, label
+from journal.ui.widgets import CardListView, EmptyState, EntityCard, button, confirm, label
 
 GENERIC_ERROR_TEXT = "Не вдалося виконати дію. Спробуйте ще раз."
 
@@ -90,20 +91,17 @@ class ClassesPage(QWidget):
             )
             return False, None
         except Exception:
-            logging.exception("Помилка під час роботи з класами")
+            log_failure("Помилка під час роботи з класами")
             QMessageBox.warning(self, "Помилка", GENERIC_ERROR_TEXT)
             return False, None
         return True, result
-
-    def _confirm(self, text: str, accept_text: str) -> bool:
-        return confirm(self, text, accept_text)
 
     # ------------------------------------------------------------------
     # Список класів
     # ------------------------------------------------------------------
 
     def _build_list_view(self) -> QWidget:
-        empty = empty_state(
+        empty = EmptyState(
             "Ще немає жодного класу",
             "Створіть клас і додайте до нього список учнів.",
             ("Новий клас", self._on_new_class),
@@ -115,7 +113,6 @@ class ClassesPage(QWidget):
             "Класи", "Списки учнів, для яких ви ведете журнали.", "Новий клас", self._on_new_class, self.show_list, empty
         )
         self.list_view = view
-        self.archived_check, self.list_stack, self.scroll = view.archived_check, view.list_stack, view.scroll
         self._icon_refreshers.append(empty.refresh_icons)
         self._icon_refreshers.append(
             lambda: view.new_button.setIcon(icons.icon("plus", theme.color("accent_text"), size=16))
@@ -129,7 +126,7 @@ class ClassesPage(QWidget):
     def show_list(self) -> None:
         """Перемикає на список і заново будує картки (порядок — як віддає сервіс)."""
         self._current_class = None
-        include_archived = self.archived_check.isChecked()
+        include_archived = self.list_view.archived_check.isChecked()
         ok, classes = self._call(lambda s: s.list_classes(self.teacher_id, include_archived))
         if not ok:
             classes = []
@@ -249,7 +246,7 @@ class ClassesPage(QWidget):
         return holder
 
     def _build_empty_students(self) -> QWidget:
-        empty = empty_state("У класі ще немає учнів", action=("Додати списком", self._on_import))
+        empty = EmptyState("У класі ще немає учнів", action=("Додати списком", self._on_import))
         self.empty_import_btn = empty.action
         return empty
 
@@ -332,7 +329,7 @@ class ClassesPage(QWidget):
                 f"Перенести клас «{info.name}» в архів? "
                 "Журнали та оцінки збережуться, клас можна буде повернути."
             )
-            if not self._confirm(text, "Архівувати"):
+            if not confirm(self, text, "Архівувати"):
                 return
             ok, _ = self._call(lambda s: s.set_class_archived(self.teacher_id, info.id, True))
         else:
@@ -340,7 +337,7 @@ class ClassesPage(QWidget):
                 f"Видалити клас «{info.name}» разом зі списком учнів ({info.student_count})? "
                 "Цю дію не можна скасувати."
             )
-            if not self._confirm(text, "Видалити"):
+            if not confirm(self, text, "Видалити"):
                 return
             ok, _ = self._call(lambda s: s.delete_class(self.teacher_id, info.id))
         if ok:
@@ -408,7 +405,7 @@ class ClassesPage(QWidget):
             return
         if mode == "delete":
             text = f"Прибрати учня «{student.full_name}» зі списку класу?"
-            if not self._confirm(text, "Прибрати"):
+            if not confirm(self, text, "Прибрати"):
                 return
             ok, _ = self._call(lambda s: s.delete_student(self.teacher_id, student.id))
         else:
@@ -416,7 +413,7 @@ class ClassesPage(QWidget):
                 f"Учень «{student.full_name}» має оцінки чи відмітки. Позначити як вибулого? "
                 "Оцінки збережуться, учня можна буде повернути."
             )
-            if not self._confirm(text, "Позначити"):
+            if not confirm(self, text, "Позначити"):
                 return
             ok, _ = self._call(lambda s: s.set_student_archived(self.teacher_id, student.id, True))
         if ok:

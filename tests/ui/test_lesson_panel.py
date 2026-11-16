@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog
 
 from journal.services.class_service import default_school_year
-from journal.services.journal_types import ExtraColumnInfo, JournalError, LessonInfo
+from journal.services.journal_types import ExtraColumnInfo, GridColumn, JournalError, LessonInfo
 from journal.ui import journals_page
 from journal.ui.journal_dialogs import DeleteJournalDialog, LessonDialog
 from journal.ui.lesson_panel import NO_TOPIC_TEXT, lesson_row_text
@@ -46,14 +46,14 @@ def test_same_date_lessons_numbered_by_id(make_page):
 
 def test_row_text_for_all_types():
     d = date(2025, 9, 2)
-    assert lesson_row_text(LessonInfo(1, d, 1, "regular", "Дроби", 0)) == "Дроби"
-    assert lesson_row_text(LessonInfo(1, d, 1, "regular", None, 0)) == ""
-    assert lesson_row_text(LessonInfo(1, d, 1, "test", "Дроби", 0)) == "Контрольна робота: Дроби"
-    assert lesson_row_text(LessonInfo(1, d, 1, "test", None, 0)) == "Контрольна робота"
-    assert lesson_row_text(LessonInfo(1, d, 1, "lab", "Маятник", 0)) == "Лабораторна робота: Маятник"
-    assert lesson_row_text(LessonInfo(1, d, 1, "lab", None, 0)) == "Лабораторна робота"
-    assert lesson_row_text(LessonInfo(1, d, 1, "independent", "Дроби", 0)) == "Самостійна робота: Дроби"
-    assert lesson_row_text(LessonInfo(1, d, 1, "independent", None, 0)) == "Самостійна робота"
+    assert lesson_row_text(LessonInfo(1, d, 1, "regular", "Дроби", 0, None, 1)) == "Дроби"
+    assert lesson_row_text(LessonInfo(1, d, 1, "regular", None, 0, None, 1)) == ""
+    assert lesson_row_text(LessonInfo(1, d, 1, "test", "Дроби", 0, None, 1)) == "Контрольна робота: Дроби"
+    assert lesson_row_text(LessonInfo(1, d, 1, "test", None, 0, None, 1)) == "Контрольна робота"
+    assert lesson_row_text(LessonInfo(1, d, 1, "lab", "Маятник", 0, None, 1)) == "Лабораторна робота: Маятник"
+    assert lesson_row_text(LessonInfo(1, d, 1, "lab", None, 0, None, 1)) == "Лабораторна робота"
+    assert lesson_row_text(LessonInfo(1, d, 1, "independent", "Дроби", 0, None, 1)) == "Самостійна робота: Дроби"
+    assert lesson_row_text(LessonInfo(1, d, 1, "independent", None, 0, None, 1)) == "Самостійна робота"
 
 
 def test_placeholder_is_italic_and_typed_row_is_tinted(page):
@@ -145,7 +145,8 @@ def test_double_click_on_any_cell_requests_edit_of_that_lesson(page, qtbot):
 
     panel = LessonPanel()  # окрема панель: сторінка відкрила б справжній діалог
     qtbot.addWidget(panel)
-    panel.set_items(page.grid_view.grid_model.lessons, [])
+    model = page.grid_view.grid_model
+    panel.set_items(model.lessons, [], model.columns)
     with qtbot.waitSignal(panel.lesson_edit_requested) as edit:
         panel.table.cellDoubleClicked.emit(1, 0)
     assert edit.args == [L2]
@@ -166,7 +167,7 @@ def test_ctrl_n_adds_and_highlights_row(make_page):
 
 
 def test_delete_removes_row(page, fake, monkeypatch):
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: True)
     page._on_delete_lesson(L2)  # порожній урок: звичайне підтвердження (урок з позначками не видаляється)
     assert rows(page) == [("1", "02.09", NO_TOPIC_TEXT)]
 
@@ -227,7 +228,7 @@ def test_refresh_keeps_current_cell(page):
 
 
 def test_reload_falls_back_to_first_cell_when_lesson_gone(page, monkeypatch):
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: True)
     page.grid_view.select_cell(1, 1)
     page._on_delete_lesson(L2)
     index = page.grid_view.currentIndex()
@@ -244,7 +245,7 @@ def test_pending_one_committed_before_delete_refusal(page, fake, monkeypatch):
     assert fake.calls_of("set_cell") == []
     shown = []
     monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text: shown.append(text))
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("урок з позначками: без підтвердження"))
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: pytest.fail("урок з позначками: без підтвердження"))
     page._on_delete_lesson(L1)
     assert len(fake.calls_of("set_cell")) == 1
     assert len(shown) == 1 and "не можна видалити" in shown[0]
@@ -273,7 +274,7 @@ def test_delete_empty_journal_uses_simple_confirm(make_page, monkeypatch):
     service = FakeJournalService(["А Б"])
     page = make_page(service)
     asked = []
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: asked.append(text) or True)
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: asked.append(text) or True)
     monkeypatch.setattr(DeleteJournalDialog, "exec", lambda self: pytest.fail("типізований діалог для порожнього"))
     page._on_delete_journal()
     assert len(asked) == 1
@@ -296,7 +297,7 @@ def test_delete_journal_with_lessons_needs_typed_word(page, fake, monkeypatch):
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(DeleteJournalDialog, "exec", fake_exec)
-    monkeypatch.setattr(page, "_confirm", lambda text, accept: pytest.fail("простий діалог замість захищеного"))
+    monkeypatch.setattr(journals_page, "confirm", lambda parent, text, accept: pytest.fail("простий діалог замість захищеного"))
     page._on_delete_journal()
     assert (seen["count"], seen["initially"], seen["wrong"], seen["ok"]) == (3, False, False, True)
     assert fake.calls_of("delete_journal") == [("delete_journal", 1, True)]
@@ -337,13 +338,21 @@ def test_delete_journal_uses_fresh_lesson_count(page, fake, monkeypatch):
 
 # --- етап 6: панель напряму (без сторінки й фейків) ---
 
+def grid_columns(lessons, extra=()):
+    """Порядок GridData.columns для тестів панелі: стовпчик — після уроків його дати, «Зошит» перед «Тематичною»."""
+    kind_order = {"notebook": 0, "thematic": 1}
+    keyed = [((x.lesson_date, 0, 0, x.id), GridColumn("lesson", x.id)) for x in lessons]
+    keyed += [((c.after_date, 1, kind_order[c.kind], c.id), GridColumn(c.kind, c.id)) for c in extra]
+    return [column for _, column in sorted(keyed, key=lambda item: item[0])]
+
+
 def make_panel(qtbot, lessons, extra=()):
     from journal.ui.lesson_panel import LessonPanel
 
     panel = LessonPanel()
     qtbot.addWidget(panel)
     panel.resize(420, 400)
-    panel.set_items(lessons, list(extra))
+    panel.set_items(lessons, list(extra), grid_columns(lessons, extra))
     panel.show()
     return panel
 
@@ -435,8 +444,9 @@ def stub_menu(monkeypatch, caption=None):
         def __init__(self, *_):
             self.actions_ = []
 
-        def addAction(self, text):
+        def addAction(self, text, callback):
             action = _Action(text)
+            action.callback = callback
             self.actions_.append(action)
             return action
 
@@ -444,7 +454,10 @@ def stub_menu(monkeypatch, caption=None):
             shown.append([a.text() for a in self.actions_])
             if caption is None:
                 pytest.fail("меню не мало відкритися")
-            return next((a for a in self.actions_ if caption in a.text()), None)
+            chosen = next((a for a in self.actions_ if caption in a.text()), None)
+            if chosen is not None:
+                chosen.callback()
+            return chosen
 
     monkeypatch.setattr(lesson_panel, "QMenu", FakeMenu)
     return shown
@@ -531,7 +544,8 @@ def test_repopulate_closes_open_editor(qtbot):
     panel = make_panel(qtbot, [lesson(1, date(2026, 9, 1), "А", number=1)])
     panel.table.cellDoubleClicked.emit(0, 3)
     assert panel.homework_editor() is not None
-    panel.set_items([lesson(1, date(2026, 9, 1), "А", number=1, homework="Нове")], [])
+    new = [lesson(1, date(2026, 9, 1), "А", number=1, homework="Нове")]
+    panel.set_items(new, [], grid_columns(new))
     assert panel.homework_editor() is None
     assert panel.table.item(0, 3).text() == "Нове"
 
