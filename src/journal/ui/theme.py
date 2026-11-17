@@ -48,6 +48,13 @@ TOKENS: dict[str, dict[str, str]] = {
         "col_thematic_soft": "#E0EAFF",
         "col_notebook_soft": "#FEF7C3",
         "col_final_soft": "#EAECF0",
+        # Колір рядка учня (позначка викладачки): м'які тони, текст лишається читабельним.
+        "row_yellow": "#FEF7C3",
+        "row_green": "#D3F8DF",
+        "row_blue": "#D1E9FF",
+        "row_pink": "#FCE7F6",
+        "row_purple": "#EBE9FE",
+        "row_orange": "#FDEAD7",
     },
     "dark": {
         "bg": "#0F1117",
@@ -79,6 +86,12 @@ TOKENS: dict[str, dict[str, str]] = {
         "col_thematic_soft": "#1F2A52",
         "col_notebook_soft": "#3A3210",
         "col_final_soft": "#2A2F3A",
+        "row_yellow": "#3A3410",
+        "row_green": "#12321F",
+        "row_blue": "#132A45",
+        "row_pink": "#3F1D38",
+        "row_purple": "#2B2350",
+        "row_orange": "#3D2412",
     },
 }
 
@@ -95,6 +108,16 @@ COLUMN_TINT = {
     "notebook": "col_notebook_soft",
     "semester": "col_final_soft",
     "annual": "col_final_soft",
+}
+
+# Кольори рядка учня: ключ (зберігається в БД) -> (назва для меню, токен).
+ROW_COLORS = {
+    "yellow": ("Жовтий", "row_yellow"),
+    "green": ("Зелений", "row_green"),
+    "blue": ("Блакитний", "row_blue"),
+    "pink": ("Рожевий", "row_pink"),
+    "purple": ("Фіолетовий", "row_purple"),
+    "orange": ("Помаранчевий", "row_orange"),
 }
 
 STYLESHEET = Template(

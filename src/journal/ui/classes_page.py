@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QStackedWidget,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -30,6 +31,7 @@ from journal.services.grid_text import plural
 from journal.services.journal_types import SemesterConflict
 from journal.ui import icons, theme
 from journal.ui.class_dialogs import ClassDialog, ImportStudentsDialog, StudentDialog
+from journal.ui.row_color_menu import build_color_menu
 from journal.ui.semester_widgets import conflict_text
 from journal.ui.service_scope import service_scope
 from journal.ui.widgets import CardListView, EmptyState, EntityCard, button, confirm, label
@@ -46,6 +48,16 @@ class _ClassCard(EntityCard):
 
     def __init__(self, info: ClassInfo) -> None:
         super().__init__(info.name, info.school_year, _students_text(info.student_count), info.archived)
+
+
+class _RowColorDelegate(QStyledItemDelegate):
+    """Тло кольору учня: QSS-правило ::item у темі змушує Qt ігнорувати BackgroundRole, тож малюємо самі."""
+
+    def paint(self, painter, option, index) -> None:
+        brush = index.data(Qt.ItemDataRole.BackgroundRole)
+        if brush is not None:
+            painter.fillRect(option.rect, brush)
+        super().paint(painter, option, index)
 
 
 class ClassesPage(QWidget):
@@ -208,6 +220,7 @@ class ClassesPage(QWidget):
 
         table = QTableWidget(0, 2)
         self.table = table
+        table.setItemDelegate(_RowColorDelegate(table))
         table.setHorizontalHeaderLabels(["№", "Прізвище та ім'я"])
         table.horizontalHeaderItem(1).setTextAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -234,9 +247,12 @@ class ClassesPage(QWidget):
         row.setSpacing(8)
         self.edit_student_btn = button("Змінити")
         self.edit_student_btn.clicked.connect(self._on_edit_student)
+        self.color_student_btn = button("Колір")
+        self.color_student_btn.clicked.connect(self._on_color_button)
         self.remove_student_btn = button("Прибрати")
         self.remove_student_btn.clicked.connect(self._on_remove_student)
         row.addWidget(self.edit_student_btn)
+        row.addWidget(self.color_student_btn)
         row.addWidget(self.remove_student_btn)
         row.addStretch(1)
         self.student_buttons = QWidget()
@@ -312,6 +328,8 @@ class ClassesPage(QWidget):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 if student.archived:
                     item.setForeground(muted)
+                elif student.row_color:
+                    item.setBackground(QBrush(QColor(theme.color(theme.ROW_COLORS[student.row_color][1]))))
             self.table.setItem(row, 0, number)
             self.table.setItem(row, 1, name)
 
@@ -372,6 +390,7 @@ class ClassesPage(QWidget):
     def _update_student_buttons(self) -> None:
         student = self._selected_student()
         self.edit_student_btn.setEnabled(student is not None)
+        self.color_student_btn.setEnabled(student is not None and not student.archived)
         self.remove_student_btn.setEnabled(student is not None)
         self.remove_student_btn.setText("Повернути" if student and student.archived else "Прибрати")
 
@@ -389,6 +408,21 @@ class ClassesPage(QWidget):
         dialog = StudentDialog(self.teacher_id, self._current_class.id, student, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._reload_detail()
+
+    def _color_menu(self, student: StudentInfo, title: str | None = None):
+        return build_color_menu(self, student.row_color, lambda color: self._set_color(student, color), title)
+
+    def _on_color_button(self) -> None:
+        student = self._selected_student()
+        if student is not None and not student.archived:
+            button_ = self.color_student_btn
+            self._color_menu(student).exec(button_.mapToGlobal(button_.rect().bottomLeft()))
+
+    def _set_color(self, student: StudentInfo, color: str | None) -> None:
+        ok, _ = self._call(lambda s: s.set_student_color(self.teacher_id, student.id, color))
+        if ok:
+            self._reload_detail()
+            self.table.selectRow(next(i for i, s in enumerate(self._students) if s.id == student.id))
 
     def _on_remove_student(self) -> None:
         student = self._selected_student()
@@ -428,6 +462,8 @@ class ClassesPage(QWidget):
         student = self._students[item.row()]
         menu = QMenu(self)
         rename = menu.addAction("Змінити")
+        if not student.archived:
+            menu.addMenu(self._color_menu(student, "Колір"))
         remove = menu.addAction("Повернути" if student.archived else "Прибрати")
         chosen = menu.exec(QCursor.pos())
         if chosen is rename:

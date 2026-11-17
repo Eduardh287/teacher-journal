@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from journal.logging_setup import log_failure
 from journal.services.auth_service import CurrentUser
+from journal.services.class_service import ClassError, ClassService
 from journal.services.grid_text import plural
 from journal.services.journal_service import JournalService
 from journal.services.journal_types import (
@@ -82,6 +83,7 @@ class JournalsPage(QWidget):
         super().__init__(parent)
         self.teacher_id = current_user.id
         self._api_factory: ApiFactory = api_factory or default_api_factory
+        self._class_factory = partial(service_scope, ClassService)  # колір учня (тести підміняють)
         self._journal_id: int | None = None
         self._semester = 1
         self._grid: GridData | None = None
@@ -263,6 +265,7 @@ class JournalsPage(QWidget):
         self.grid_view.lesson_delete_requested.connect(self._on_delete_lesson)
         self.grid_view.column_move_requested.connect(self._on_move_column)
         self.grid_view.column_delete_requested.connect(self._on_delete_column)
+        self.grid_view.student_color_requested.connect(self._on_student_color)
         self.grid_view.selectionModel().currentColumnChanged.connect(self._on_grid_column_changed)
         self.lesson_panel = LessonPanel()
         self.lesson_panel.lesson_selected.connect(self._on_panel_lesson_selected)
@@ -491,6 +494,21 @@ class JournalsPage(QWidget):
         ok, _ = self._call(lambda api: api.move_column(self.teacher_id, column_id, after_id), banner=True)
         if ok:
             self.reload_grid(select_column=GridColumn(extra.kind, column_id))
+
+    def _on_student_color(self, student_id: int, color: str | None) -> None:
+        """Колір рядка — властивість учня (ClassService), тому діє в усіх журналах класу."""
+        self.grid_view.flush_pending()
+        try:
+            with self._class_factory() as service:
+                service.set_student_color(self.teacher_id, student_id, color)
+        except ClassError as error:
+            self._report(str(error), banner=True)
+            return
+        except Exception:
+            log_failure("Помилка під час зміни кольору учня")
+            self._report(GENERIC_ERROR_TEXT, banner=True)
+            return
+        self.reload_grid()
 
     def _on_delete_column(self, column_id: int) -> None:
         self.grid_view.flush_pending()

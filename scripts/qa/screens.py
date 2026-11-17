@@ -833,6 +833,14 @@ state("rollover_eight_lines", lambda: RolloverDialog(plan_for(T_R8)), size=None)
 state("rollover_no_checkbox", lambda: RolloverDialog(plan_for(T_R0)), size=None)
 state("rollover_long_names", lambda: RolloverDialog(plan_for(T_RL)), size=None)
 
+
+# Правки викладачки 1: кольори рядків учнів (останні стани — кольори лишаються до відкату).
+for student, color in zip(cs.list_students(T.id, c9.id)[:7], (None, "yellow", "green", "blue", "pink", "purple", "orange")):
+    cs.set_student_color(T.id, student.id, color)
+sess.flush()
+state("grid_row_colors", build_grid_full)
+state("class_row_colors", class_detail(c9.id))
+
 # ---------------------------------------------------------------------------
 # Контраст і жорстко задані кольори
 # ---------------------------------------------------------------------------
