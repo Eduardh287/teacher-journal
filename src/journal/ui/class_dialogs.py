@@ -1,13 +1,16 @@
 """Діалоги сторінки «Класи»: клас, учень, імпорт списку учнів."""
 from collections.abc import Callable
 from datetime import date
+from html.parser import HTMLParser
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QMimeData, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QWidget,
@@ -45,8 +48,8 @@ class _ClassDialogBase(FormDialog):
         return self.run(call, ClassError, "Помилка під час роботи з класами")
 
     @staticmethod
-    def _edit(placeholder: str, max_length: int) -> QLineEdit:
-        edit = QLineEdit()
+    def _edit(placeholder: str, max_length: int, edit_class: type[QLineEdit] = QLineEdit) -> QLineEdit:
+        edit = edit_class()
         edit.setPlaceholderText(placeholder)
         edit.setMaxLength(max_length)
         return edit
@@ -97,6 +100,129 @@ class ClassDialog(_ClassDialogBase):
             self.accept()
 
 
+class _HtmlLines(HTMLParser):
+    """HTML → рядки тексту: кожен <tr> — один рядок (клітинки через Tab), <p>/<br>/<li>/<div> — розрив."""
+
+    _BREAKS = ("br", "p", "div", "li")
+    _SKIPPED = ("style", "script", "head", "title")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: list[str] = []
+        self._cells: list[str] = []
+        self._buffer: list[str] = []
+        self._rows = 0  # глибина вкладення <tr>
+        self._skip = 0
+
+    def _end_cell(self) -> None:
+        text = " ".join("".join(self._buffer).split())
+        self._buffer = []
+        if text:
+            self._cells.append(text)
+
+    def end_line(self) -> None:
+        self._end_cell()
+        if self._cells:
+            self.lines.append("\t".join(self._cells))
+        self._cells = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag in self._SKIPPED:
+            self._skip += 1
+        elif tag == "tr":
+            self.end_line()
+            self._rows += 1
+        elif tag in ("td", "th"):
+            self._end_cell()
+        elif tag in self._BREAKS:
+            if self._rows:
+                self._buffer.append(" ")
+            else:
+                self.end_line()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIPPED:
+            self._skip = max(0, self._skip - 1)
+        elif tag == "tr":
+            self.end_line()
+            self._rows = max(0, self._rows - 1)
+        elif tag in ("td", "th"):
+            self._end_cell()
+        elif tag in self._BREAKS and not self._rows:
+            self.end_line()
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip:
+            self._buffer.append(data)
+
+
+def mime_to_text(mime: QMimeData) -> str:
+    """Текст із буфера обміну: text/plain, а якщо його немає (напр. таблиця Word) — з text/html."""
+    if mime.hasText() and mime.text().strip():
+        return mime.text()
+    if mime.hasHtml():
+        parser = _HtmlLines()
+        parser.feed(mime.html())
+        parser.close()
+        parser.end_line()
+        return "\n".join(parser.lines)
+    return ""
+
+
+class _ImportTextEdit(QPlainTextEdit):
+    """Поле списку: приймає вставку й з HTML-буфера; якщо тексту не вдалося дістати — сигнал."""
+
+    paste_failed = Signal()
+
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:
+        return source.hasText() or source.hasHtml()
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        text = mime_to_text(source)
+        if text:
+            self.insertPlainText(text)
+        else:
+            self.paste_failed.emit()
+
+
+class _PasteLineEdit(QLineEdit):
+    """Поле імені: вставка 2+ непорожніх рядків не склеюється в одне ім'я, а віддається сигналом."""
+
+    list_pasted = Signal(str)
+
+    def paste(self) -> None:
+        text = mime_to_text(QGuiApplication.clipboard().mimeData())
+        if sum(1 for line in text.splitlines() if line.strip()) >= 2:
+            self.list_pasted.emit(text)
+        else:
+            self.insert(" ".join(text.split()))
+
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.StandardKey.Paste):
+            self.paste()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def paste_menu(self) -> QMenu:
+        # Власне меню: стандартний пункт «Вставити» не викликає paste(), а розпізнати його не можна.
+        menu = QMenu(self)
+        has_selection = self.hasSelectedText()
+        for text, slot, enabled in (
+            ("Вирізати", self.cut, has_selection),
+            ("Копіювати", self.copy, has_selection),
+            ("Вставити", self.paste, not self.isReadOnly()),
+            ("Виділити все", self.selectAll, bool(self.text())),
+        ):
+            menu.addAction(text, slot).setEnabled(enabled)
+        return menu
+
+    def contextMenuEvent(self, event) -> None:
+        menu = self.paste_menu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+
 class StudentDialog(_ClassDialogBase):
     """Додавання (з кнопкою «Додати ще») або перейменування одного учня."""
 
@@ -112,10 +238,22 @@ class StudentDialog(_ClassDialogBase):
         self.student = student
         self.changed = False  # чи було щось додано/змінено (для оновлення списку на сторінці)
 
-        self.name_edit = self._edit("Коваленко Олена", MAX_STUDENT_NAME)
+        self.name_edit = self._edit(
+            "Коваленко Олена", MAX_STUDENT_NAME, _PasteLineEdit if student is None else QLineEdit
+        )
         if student is not None:
             self.name_edit.setText(student.full_name)
+        else:
+            self.name_edit.list_pasted.connect(self._on_list_pasted)
         self.body.addWidget(field("ПРІЗВИЩЕ ТА ІМ'Я", self.name_edit))
+        if student is None:
+            self.body.addWidget(
+                label(
+                    "Можна вставити одразу весь список — кожен учень з нового рядка.",
+                    muted=True,
+                    wrap=True,
+                )
+            )
 
         # Невелика примітка після «Додати ще»
         self.note_label = label("", muted=True)
@@ -156,6 +294,15 @@ class StudentDialog(_ClassDialogBase):
             self.name_edit.clear()
             self.name_edit.setFocus()
 
+    def _on_list_pasted(self, text: str) -> None:
+        dialog = ImportStudentsDialog(self.teacher_id, self.class_id, text, parent=self)
+        dialog.exec()
+        if dialog.changed:
+            self.changed = True
+            self.accept()
+        else:
+            self.name_edit.clear()
+
     def _on_rename(self) -> None:
         student_id = self.student.id
         text = self.name_edit.text()
@@ -170,7 +317,9 @@ class ImportStudentsDialog(_ClassDialogBase):
 
     PREVIEW_DELAY_MS = 300
 
-    def __init__(self, teacher_id: int, class_id: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, teacher_id: int, class_id: int, initial_text: str = "", parent: QWidget | None = None
+    ) -> None:
         super().__init__("Додати учнів списком", teacher_id, parent)
         self.setMinimumWidth(520)
         self.class_id = class_id
@@ -183,11 +332,18 @@ class ImportStudentsDialog(_ClassDialogBase):
                 wrap=True,
             )
         )
-        self.text_edit = QPlainTextEdit()
+        self.text_edit = _ImportTextEdit()
         self.text_edit.setPlaceholderText("1. Коваленко Олена\n2. Шевченко Іван")
         self.text_edit.setMinimumHeight(220)
+        self.text_edit.setPlainText(initial_text)
         self.text_edit.setTabChangesFocus(True)  # Tab веде до кнопок, а не вставляє табуляцію
         self.body.addWidget(self.text_edit)
+
+        self.paste_hint = label("Не вдалося вставити: скопіюйте список як текст", muted=True)
+        self.paste_hint.hide()
+        self.text_edit.paste_failed.connect(self.paste_hint.show)
+        self.text_edit.textChanged.connect(self.paste_hint.hide)
+        self.body.addWidget(self.paste_hint)
 
         self.preview_label = label("", muted=True)
         self.body.addWidget(self.preview_label)

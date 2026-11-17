@@ -14,6 +14,7 @@ from journal.version import app_version
 from journal.services.auth_service import AuthService
 from journal.ui.auth_dialogs import LoginDialog, RegisterDialog
 from journal.ui.backup_dialogs import default_exit_backup, recover_interrupted_restore
+from journal.ui.backup_reminder import start_backup_reminder
 from journal.ui.main_window import MainWindow
 from journal.ui.rollover_dialog import maybe_run_rollover
 from journal.ui.theme import apply_theme, load_theme_name
@@ -153,7 +154,13 @@ def main() -> None:
     window = MainWindow(dialog.current_user, exit_backup=default_exit_backup)
     window.show()
     teacher_id = dialog.current_user.id
-    QTimer.singleShot(0, lambda: maybe_run_rollover(window, teacher_id))
+
+    def after_start() -> None:
+        # По черзі, щоб два діалоги не з'явилися одночасно.
+        maybe_run_rollover(window, teacher_id)
+        start_backup_reminder(window)
+
+    QTimer.singleShot(0, after_start)
     sys.exit(app.exec())
 
 

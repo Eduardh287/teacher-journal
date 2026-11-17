@@ -30,6 +30,9 @@ _APOSTROPHES = str.maketrans({"’": "'", "ʼ": "'", "`": "'"})
 # Невидимі символи, які трапляються в тексті з PDF/Word/macOS: zero-width, BOM, м'який перенос.
 _INVISIBLE = str.maketrans({c: None for c in "\u200b\u200c\u200d\u2060\ufeff\u00ad"})
 
+# Дозволені кольори рядка учня (ключі theme.ROW_COLORS; збіг перевіряє тест). Дублюються в CHECK міграції.
+ROW_COLOR_KEYS = ("yellow", "green", "blue", "pink", "purple", "orange")
+
 RemovalMode = Literal["delete", "archive"]
 
 
@@ -59,6 +62,7 @@ class StudentInfo:
     full_name: str
     position: int
     archived: bool
+    row_color: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,7 @@ def _parse_lines(text: str) -> list[tuple[int, str]]:
         # Невидимі символи прибираємо ДО пошуку номера: BOM на початку рядка заважав би йому.
         line = raw.translate(_INVISIBLE).replace("\t", " ")
         name = normalize_name(_LEADING_NUMBER_RE.sub("", line, count=1))
-        if name:
+        if any(ch.isalpha() for ch in name):  # «1», «—», «№» з таблиці Word — не учні
             result.append((line_no, name))
     return result
 
@@ -260,6 +264,15 @@ class ClassService:
         self.repo.session.flush()
         self._renumber(student.class_id)
 
+    def set_student_color(self, teacher_id: int, student_id: int, color: str | None) -> StudentInfo:
+        """Колір рядка учня в журналах; None — без кольору. Дозволено й для вибулих і для архівного класу."""
+        if color is not None and color not in ROW_COLOR_KEYS:
+            raise ClassError("Невідомий колір")
+        student = self._own_student(teacher_id, student_id)
+        student.row_color = color
+        self.repo.session.flush()
+        return _student_info(student)
+
     # --- допоміжне ---
 
     def _own_class(self, teacher_id: int, class_id: int, editable: bool = False) -> SchoolClass:
@@ -350,4 +363,4 @@ def _class_info(c: SchoolClass, student_count: int) -> ClassInfo:
 
 
 def _student_info(s: Student) -> StudentInfo:
-    return StudentInfo(s.id, s.full_name, s.position, s.archived)
+    return StudentInfo(s.id, s.full_name, s.position, s.archived, s.row_color)

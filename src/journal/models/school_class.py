@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, SmallInteger, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, SmallInteger, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from journal.models.base import Base, TimestampMixin
@@ -36,11 +36,19 @@ class Student(TimestampMixin, Base):
     """
 
     __tablename__ = "students"
+    __table_args__ = (
+        CheckConstraint(
+            "row_color IS NULL OR row_color IN ('yellow', 'green', 'blue', 'pink', 'purple', 'orange')",
+            name="row_color",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
     full_name: Mapped[str] = mapped_column(String(150))
     position: Mapped[int] = mapped_column(SmallInteger)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Ключ м'якого кольору рядка в журналі (див. ROW_COLOR_KEYS у class_service); NULL — без кольору.
+    row_color: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     school_class: Mapped[SchoolClass] = relationship(back_populates="students")

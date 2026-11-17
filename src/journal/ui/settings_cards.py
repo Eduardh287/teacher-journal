@@ -9,9 +9,11 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFileDialog,
     QHBoxLayout,
     QLineEdit,
+    QPushButton,
     QWidget,
 )
 
@@ -21,11 +23,11 @@ from journal.services.journal_types import JournalError, SemesterConflict
 from journal.services.semesters import DEFAULT_BOUNDARIES, SemesterBoundaries, SemesterError
 from journal.services.settings_service import SettingsService
 from journal.services.subject_service import MAX_SUBJECT_NAME, SubjectError, SubjectService
-from journal.ui import auth_dialogs, backup_dialogs
+from journal.ui import auth_dialogs, backup_dialogs, backup_reminder
 from journal.ui.semester_widgets import SemesterBoundsEditor, conflict_text
 from journal.ui.service_scope import service_scope
 from journal.ui.theme import app_settings
-from journal.ui.widgets import ElidedLabel, SettingsCard, button, label
+from journal.ui.widgets import ElidedLabel, SettingsCard, button, label, segment_button
 
 GENERIC_ERROR = "Не вдалося зберегти зміни"
 
@@ -230,6 +232,24 @@ class BackupsCard(SettingsCard):
             row.addWidget(widget)
         row.addStretch(1)
         self.body.addLayout(row)
+
+        self.body.addWidget(label("Нагадувати про резервну копію", muted=True))
+        period_row = QHBoxLayout()
+        period_row.setSpacing(8)
+        self.period_buttons: dict[int, QPushButton] = {}
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        current = backup_reminder.load_days()
+        for days, title in backup_reminder.PERIODS:
+            seg = segment_button(title)
+            seg.setChecked(days == current)
+            group.addButton(seg, days)
+            period_row.addWidget(seg)
+            self.period_buttons[days] = seg
+        group.idClicked.connect(backup_reminder.save_days)
+        period_row.addStretch(1)
+        self.body.addLayout(period_row)
+
         self.add_feedback()
         self.refresh()
 

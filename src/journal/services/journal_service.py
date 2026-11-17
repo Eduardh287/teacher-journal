@@ -197,7 +197,7 @@ class JournalService:
         return GridData(
             journal=_journal_info(journal, len(all_lessons)),
             semester=semester,
-            students=[StudentInfo(s.id, s.full_name, s.position, s.archived) for s in shown],
+            students=[StudentInfo(s.id, s.full_name, s.position, s.archived, s.row_color) for s in shown],
             lessons=[
                 _lesson_info(lesson, counts.get(lesson.id, 0), numbers[lesson.id]) for lesson in lessons
             ],

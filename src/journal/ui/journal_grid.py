@@ -40,6 +40,7 @@ from journal.services.journal_types import (
 )
 from journal.ui import theme
 from journal.ui.journal_dialogs import CommentDialog
+from journal.ui.row_color_menu import build_color_menu
 
 GRADE_CHAIN_MS = 500  # скільки чекаємо другу цифру після «1» (10/11/12)
 COLUMN_WIDTH = 56
@@ -307,6 +308,37 @@ def _column_tooltip(kind: str, extra: ExtraColumnInfo | None) -> str:
     return "Річна — середнє двох семестрових оцінок"
 
 
+def row_color_token(student: StudentInfo) -> str | None:
+    """Токен м'якого кольору рядка; вибулі учні залишаються приглушеними — без кольору."""
+    if student.archived or student.row_color is None:
+        return None
+    return theme.ROW_COLORS[student.row_color][1]
+
+
+class StudentHeaderView(QHeaderView):
+    """Вертикальний заголовок («№. Прізвище»): якщо в учня є колір рядка — тло цього кольору."""
+
+    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:
+        model = self.model()
+        token = row_color_token(model.students[logical_index]) if 0 <= logical_index < len(model.students) else None
+        if token is None or not rect.isValid():
+            super().paintSection(painter, rect, logical_index)
+            return
+        painter.save()
+        painter.fillRect(rect, QColor(theme.color(token)))
+        _draw_borders(painter, rect, False)
+        # Як у звичайних рядків (QHeaderView::section у theme.py): 9pt, 600, приглушений колір.
+        painter.setPen(QColor(theme.color("muted")))
+        font = QFont(painter.font())
+        font.setPointSize(9)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        text = model.headerData(logical_index, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole)
+        text = QFontMetrics(font).elidedText(str(text), Qt.TextElideMode.ElideRight, rect.width() - 20)
+        painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        painter.restore()
+
+
 class JournalHeaderView(QHeaderView):
     """Горизонтальний заголовок: дата й абревіатура типу уроку на тлі, що залежить від типу."""
 
@@ -375,10 +407,11 @@ class JournalCellDelegate(QStyledItemDelegate):
         cell: CellInfo = index.data(CellRole)
         model: JournalGridModel = index.model()
         rect = option.rect
-        muted_row = model.students[index.row()].archived
+        student = model.students[index.row()]
+        muted_row = student.archived
         kind = model.kind_at(index.column())
         painter.save()
-        self._fill(painter, rect, cell, kind, muted_row)
+        self._fill(painter, rect, cell, kind, muted_row, row_color_token(student))
         _draw_borders(painter, rect, kind == "semester")
         text = index.data(Qt.ItemDataRole.DisplayRole)
         if text:
@@ -392,13 +425,16 @@ class JournalCellDelegate(QStyledItemDelegate):
         painter.restore()
 
     @staticmethod
-    def _fill(painter: QPainter, rect: QRect, cell: CellInfo, kind: str, muted_row: bool) -> None:
+    def _fill(
+        painter: QPainter, rect: QRect, cell: CellInfo, kind: str, muted_row: bool, row_token: str | None
+    ) -> None:
         if muted_row:
             token = "hover"
         elif kind != "lesson":
             token = theme.COLUMN_TINT[kind]
         else:
-            token = _ATTENDANCE_SOFT.get(cell.attendance, "surface")
+            # Власна позначка клітинки (н/хв/сп) сильніша за колір рядка.
+            token = _ATTENDANCE_SOFT.get(cell.attendance) or row_token or "surface"
         painter.fillRect(rect, QColor(theme.color(token)))
 
     @staticmethod
@@ -454,6 +490,7 @@ class JournalGridView(QTableView):
     lesson_delete_requested = Signal(int)
     column_move_requested = Signal(int)    # id extra-стовпчика («Тем»/«Зош»)
     column_delete_requested = Signal(int)
+    student_color_requested = Signal(int, object)  # id учня, ключ кольору або None («Без кольору»)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -466,6 +503,7 @@ class JournalGridView(QTableView):
         self.setModel(self.grid_model)
 
         self.setHorizontalHeader(JournalHeaderView(self))
+        self.setVerticalHeader(StudentHeaderView(Qt.Orientation.Vertical, self))
         vheader = self.verticalHeader()
         vheader.setDefaultSectionSize(ROW_HEIGHT)
         vheader.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
@@ -486,6 +524,8 @@ class JournalGridView(QTableView):
         header.sectionDoubleClicked.connect(self._on_header_double_click)
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._on_header_menu)
+        vheader.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        vheader.customContextMenuRequested.connect(self._on_student_menu)
 
     # ------------------------------------------------------------------
     # Службове
@@ -700,3 +740,12 @@ class JournalGridView(QTableView):
             menu.addAction("Перемістити…", lambda: self.column_move_requested.emit(column.id))
             menu.addAction("Видалити", lambda: self.column_delete_requested.emit(column.id))
         menu.exec(self.horizontalHeader().mapToGlobal(pos))
+
+    def _on_student_menu(self, pos: QPoint) -> None:
+        """Правий клік на імені учня: вибір кольору рядка (вибулим колір не ставимо)."""
+        row = self.verticalHeader().logicalIndexAt(pos)
+        if not 0 <= row < len(self.grid_model.students) or self.grid_model.students[row].archived:
+            return
+        student = self.grid_model.students[row]
+        menu = build_color_menu(self, student.row_color, lambda color: self.student_color_requested.emit(student.id, color))
+        menu.exec(self.verticalHeader().mapToGlobal(pos))

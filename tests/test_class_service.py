@@ -502,3 +502,50 @@ def test_normalize_name_nfc_makes_decomposed_letters_equal():
     decomposed = "Йосипенко".replace("Й", "И\u0306")
     assert decomposed != "Йосипенко"
     assert normalize_name(decomposed) == "Йосипенко"
+
+
+# ---------- колір рядка учня ----------
+
+
+def _student(svc, teacher, name="Іваненко Іван"):
+    school_class = svc.create_class(teacher.id, "9-А", YEAR)
+    return svc.add_student(teacher.id, school_class.id, name)
+
+
+def test_row_color_keys_match_theme():
+    from journal.services.class_service import ROW_COLOR_KEYS
+    from journal.ui import theme
+
+    assert ROW_COLOR_KEYS == tuple(theme.ROW_COLORS)
+
+
+def test_set_student_color_and_clear(svc, teacher, session):
+    student = _student(svc, teacher)
+    assert student.row_color is None
+    assert svc.set_student_color(teacher.id, student.id, "green").row_color == "green"
+    session.expire_all()
+    assert svc.list_students(teacher.id, session.get(Student, student.id).class_id)[0].row_color == "green"
+    assert svc.set_student_color(teacher.id, student.id, None).row_color is None
+
+
+def test_set_student_color_rejects_unknown_key(svc, teacher):
+    student = _student(svc, teacher)
+    with pytest.raises(ClassError):
+        svc.set_student_color(teacher.id, student.id, "red")
+
+
+def test_set_student_color_foreign_student_not_found(svc, teacher, session):
+    student = _student(svc, teacher)
+    other = make_teacher(session, "b")
+    with pytest.raises(ClassError):
+        svc.set_student_color(other.id, student.id, "blue")
+
+
+def test_db_check_rejects_bad_color(svc, teacher, session):
+    from sqlalchemy.exc import IntegrityError
+
+    student = _student(svc, teacher)
+    session.get(Student, student.id).row_color = "red"
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
